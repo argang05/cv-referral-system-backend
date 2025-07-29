@@ -142,7 +142,7 @@ CORS_ALLOWED_ORIGINS = [
 ]
 
 # For development, you can also use (but not recommended for production):
-CORS_ALLOW_ALL_ORIGINS = True
+# CORS_ALLOW_ALL_ORIGINS = True
 
 # Allow credentials if needed
 CORS_ALLOW_CREDENTIALS = True

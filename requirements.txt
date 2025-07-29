@@ -5,3 +5,4 @@ httpx==0.28.1
 python-decouple==3.8
 python-dotenv==1.1.1
 rest_framework_simplejwt==0.0.2
+gunicorn
