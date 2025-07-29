@@ -141,6 +141,15 @@ CORS_ALLOWED_ORIGINS = [
     "https://cv-referral-system-frontend-abzx4yerd-abhirup-gangulys-projects.vercel.app"
 ]
 
+ALLOWED_HOSTS = [
+    'cv-referral-system-backend.onrender.com',  # Your Render domain
+    'localhost',  # For local development
+    '127.0.0.1',  # For local development
+    'cv-referral-system-frontend.vercel.app',
+    'cv-referral-system-frontend-git-main-abhirup-gangulys-projects.vercel.app',
+    'cv-referral-system-frontend-abzx4yerd-abhirup-gangulys-projects.vercel.app'
+]
+
 # For development, you can also use (but not recommended for production):
 # CORS_ALLOW_ALL_ORIGINS = True
 
