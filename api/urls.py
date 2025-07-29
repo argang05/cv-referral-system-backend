@@ -1,10 +1,10 @@
 from django.urls import path
 from . import views
-from .views import UploadCVView,RegisterView, LoginView, BulkUserRegisterView,MeView,DepartmentListView, UpdateUserProfile, GetUserByEmpIDView
+from .views import UploadCVView,RegisterView, LoginView, BulkUserRegisterView,MeView,DepartmentListView, UpdateUserProfile, GetUserByEmpIDView, HelloWorldView
 
 
 urlpatterns = [
-    path('hello/', views.hello_world, name='hello'),
+    path('hello/', HelloWorldView.as_view(), name='hello-world'),
     path('upload-cv/', UploadCVView.as_view(), name='upload-cv'),
     path('register/', RegisterView.as_view()),
     path('login/', LoginView.as_view()),

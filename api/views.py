@@ -112,9 +112,11 @@ REVIEWER_SBU_MAPPING = {
 
 
 # Create your views here.
-@api_view(['GET'])
-def hello_world(request):
-    return Response({'message': 'Hello from Django!'})
+class HelloWorldView(APIView):
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+        return Response({'message': 'Hello from Django!'})
 
 
 class UploadCVView(APIView):
