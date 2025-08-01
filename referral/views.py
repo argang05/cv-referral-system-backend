@@ -50,7 +50,7 @@ class SubmitReferralView(APIView):
         print("Matched SBUs:", matched_sbus.count())
         referral.sbus.set(matched_sbus)
 
-        recipients = sbu_emails
+        recipients = [sbu.personal_email for sbu in referral.sbus.all()]
         print("Recipients: ", recipients)
 
         portal_link = f"{settings.FRONTEND_BASE_URL}/review-cv"
@@ -58,7 +58,7 @@ class SubmitReferralView(APIView):
 
         send_dynamic_email(
             purpose='CV_TO_SBU',
-            to_emails=['abhishek.ganguly@tor.ai'], #replace with recipients variable when ready to test.
+            to_emails=['argang05@gmail.com'], #replace with recipients variable when ready to test.
             context_data={
                 'candidate_name': referral.candidate_name,
                 'portal_link': portal_link
@@ -150,11 +150,11 @@ class UpdateReferralView(APIView):
             referral.cv_url = cv_url
 
         referral.save()
-        recipients = [sbu.email for sbu in referral.sbus.all()]
+        recipients = [sbu.personal_email for sbu in referral.sbus.all()]
         print("Recipients:", recipients) 
         send_dynamic_email(
             purpose="CV_UPDATED_SBU",
-            to_emails=["abhishek.ganguly@tor.ai"], # ✅ Set this to recipients to see in action
+            to_emails=["argang05@gmail.com"], # ✅ Set this to recipients to see in action
             context_data={
                 "candidate_name": referral.candidate_name,
                 "portal_link": f"{settings.FRONTEND_BASE_URL}/review-cv"
@@ -180,11 +180,11 @@ class DeleteReferralView(APIView):
         if referral.referrer.emp_id != emp_id:
             return Response({"error": "Unauthorized"}, status=403)
 
-        recipients = [sbu.email for sbu in referral.sbus.all()]
+        recipients = [sbu.personal_email for sbu in referral.sbus.all()]
         print("Recipients:", recipients) 
         send_dynamic_email(
             purpose="CV_DELETED_SBU",
-            to_emails=["abhishek.ganguly@tor.ai"], # ✅ Set this to recipients to see in action
+            to_emails=["argang05@gmail.com"], # ✅ Set this to recipients to see in action
             context_data={
                 "candidate_name": referral.candidate_name
             }

@@ -109,12 +109,13 @@ class SubmitReviewView(APIView):
             referral.rejection_stage = "SBU"
             referral.rejection_reason = comment
 
-            recipientReferrer = referral.referrer.email 
+            recipientReferrer = referral.referrer.personal_email
+            print("Recipient Referrer: ",recipientReferrer)
 
             # ✅ Email to Referrer
             send_dynamic_email(
                 purpose="CV_REJECTED_SBU",
-                to_emails=['abhishek.ganguly@tor.ai'],
+                to_emails=['argang05@gmail.com'],
                 context_data={
                     "candidate_name": referral.candidate_name,
                     "portal_link": f"{settings.PORTAL_BASE_URL}/",
@@ -125,12 +126,13 @@ class SubmitReviewView(APIView):
         elif decision == "CONSIDERED":
             referral.current_status = "CONSIDERED"
 
-            recipientReferrer = referral.referrer.email 
+            recipientReferrer = referral.referrer.personal_email
+            print("Recipient Referrer: ",recipientReferrer)
 
             # ✅ Email to Referrer
             send_dynamic_email(
                 purpose="CV_APPROVED_SBU",
-                to_emails=['abhishek.ganguly@tor.ai'],
+                to_emails=['argang05@gmail.com'],
                 context_data={
                     "candidate_name": referral.candidate_name,
                     "portal_link": f"{settings.FRONTEND_BASE_URL}/"
@@ -138,10 +140,11 @@ class SubmitReviewView(APIView):
             )
 
             # ✅ Notify HR
-            hr_emails = list(User.objects.filter(role='HR').values_list('email', flat=True))
+            hr_emails = list(User.objects.filter(is_hr=True).values_list('personal_email', flat=True))
+            print("HR Personal Emails: ",hr_emails)
             send_dynamic_email(
                 purpose="CV_TO_HR",
-                to_emails=['abhishek.ganguly@tor.ai'],
+                to_emails=['argang05@gmail.com'],
                 context_data={
                     "candidate_name": referral.candidate_name,
                     "portal_link": f"{settings.FRONTEND_BASE_URL}/hr-evaluation"
@@ -194,12 +197,13 @@ class UpdateReviewView(APIView):
                 referral.rejection_stage = "SBU"
                 referral.rejection_reason = comment
 
-                referrerMail = referral.referrer.email
+                referrerMail = referral.referrer.personal_email
+                print("Referrer Mail: ",referrerMail)
 
                 # Notify Referrer
                 send_dynamic_email(
                     purpose="CV_REJECTED_SBU",
-                    to_emails=['abhishek.ganguly@tor.ai'],
+                    to_emails=['argang05@gmail.com'],
                     context_data={
                         "candidate_name": referral.candidate_name,
                         "portal_link": f"{settings.FRONTEND_BASE_URL}/",
@@ -209,11 +213,11 @@ class UpdateReviewView(APIView):
 
                 # ✅ Notify HRs if it was previously accepted
                 if previous_decision == "CONSIDERED":
-                    hr_emails = list(User.objects.filter(is_hr=True).values_list('email', flat=True))
-                    print("HR Emails: ",hr_emails)
+                    hr_emails = list(User.objects.filter(is_hr=True).values_list('personal_email', flat=True))
+                    print("HR Personal Emails: ",hr_emails)
                     send_dynamic_email(
                         purpose="CV_REVOKED_BY_SBU",
-                        to_emails=['abhishek.ganguly@tor.ai'],
+                        to_emails=['argang05@gmail.com'],
                         context_data={
                             "candidate_name": referral.candidate_name,
                             "portal_link": f"{settings.FRONTEND_BASE_URL}/hr-evaluation",
@@ -225,12 +229,13 @@ class UpdateReviewView(APIView):
                 referral.rejection_stage = None
                 referral.rejection_reason = None
 
-                referrerMail = referral.referrer.email
+                referrerMail = referral.referrer.personal_email
+                print("Referrer Mail: ",referrerMail)
 
                 # Notify Referrer
                 send_dynamic_email(
                     purpose="CV_APPROVED_SBU",
-                    to_emails=['abhishek.ganguly@tor.ai'],
+                    to_emails=['argang05@gmail.com'],
                     context_data={
                         "candidate_name": referral.candidate_name,
                         "portal_link": f"{settings.FRONTEND_BASE_URL}/"
@@ -239,11 +244,11 @@ class UpdateReviewView(APIView):
 
                 # Notify HR only if previously rejected
                 if previous_decision == "REJECTED":
-                    hr_emails = list(User.objects.filter(is_hr=True).values_list('email', flat=True))
-                    print("HR Emails: ",hr_emails)
+                    hr_emails = list(User.objects.filter(is_hr=True).values_list('personal_email', flat=True))
+                    print("HR Personal Emails: ",hr_emails)
                     send_dynamic_email(
                         purpose="CV_TO_HR",
-                        to_emails=['abhishek.ganguly@tor.ai'],
+                        to_emails=['argang05@gmail.com'],
                         context_data={
                             "candidate_name": referral.candidate_name,
                             "portal_link": f"{settings.FRONTEND_BASE_URL}/hr-evaluation"

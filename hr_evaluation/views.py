@@ -84,11 +84,11 @@ class HREvaluationView(APIView):
             referral.current_status = "FINAL_REJECTED"
             referral.rejection_stage = "HR"
             referral.rejection_reason = comment
-            referrerEmail = referral.referrer.email
-            print("Recipient Email: ",referrerEmail)
+            referrerEmail = referral.referrer.personal_email
+            print("Recipient Personal Email: ",referrerEmail)
             send_dynamic_email(
                 purpose="CV_REJECTED_HR",
-                to_emails=["abhishek.ganguly@tor.ai"],
+                to_emails=["argang05@gmail.com"],
                 context_data={
                     "candidate_name": referral.candidate_name,
                     "portal_link": f"{settings.FRONTEND_BASE_URL}/",
@@ -97,11 +97,11 @@ class HREvaluationView(APIView):
             )
         elif status == "ACCEPTED":
             referral.current_status = "FINAL_ACCEPTED"
-            referrerEmail = referral.referrer.email
-            print("Recipient Email: ",referrerEmail)
+            referrerEmail = referral.referrer.personal_email
+            print("Recipient Personal Email: ",referrerEmail)
             send_dynamic_email(
                 purpose="CV_APPROVED_HR",
-                to_emails=["abhishek.ganguly@tor.ai"],
+                to_emails=["argang05@gmail.com"],
                 context_data={
                     "candidate_name": referral.candidate_name,
                     "portal_link": f"{settings.FRONTEND_BASE_URL}/"
@@ -138,12 +138,12 @@ class HREvaluationView(APIView):
                 referral.rejection_reason = comment  # ✅ updated from request directly
                 referral.save()
 
-                referrerEmail = referral.referrer.email
+                referrerEmail = referral.referrer.personal_email
                 print("Recipient: ",referrerEmail)
                 print("Rejection Reason:", comment)
                 send_dynamic_email(
                     purpose="CV_REJECTED_HR",
-                    to_emails=['abhishek.ganguly@tor.ai'],
+                    to_emails=['argang05@gmail.com'],
                     context_data={
                         "candidate_name": referral.candidate_name,
                         "portal_link": f"{settings.FRONTEND_BASE_URL}/",
@@ -157,11 +157,11 @@ class HREvaluationView(APIView):
                 referral.rejection_reason = None
                 referral.save()
 
-                referrerEmail = referral.referrer.email
+                referrerEmail = referral.referrer.personal_email
                 print("Recipient: ",referrerEmail)
                 send_dynamic_email(
                     purpose="CV_APPROVED_HR",
-                    to_emails=['abhishek.ganguly@tor.ai'],
+                    to_emails=['argang05@gmail.com'],
                     context_data={
                         "candidate_name": referral.candidate_name,
                         "portal_link": f"{settings.FRONTEND_BASE_URL}/"

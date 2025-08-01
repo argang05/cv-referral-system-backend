@@ -19,23 +19,27 @@ class User(models.Model):
     emp_id = models.CharField(max_length=20, unique=True)
     name = models.CharField(max_length=100)
     email = models.EmailField(unique=True)
+    personal_email = models.EmailField(null=True, blank=True)  # ✅ new field
     password_og = models.TextField()
     password_hash = models.TextField()
     role = models.CharField(max_length=20, choices=ROLE_CHOICES)
     is_active = models.BooleanField(default=True)
-    department = ArrayField(models.CharField(max_length=100), default=list)  # 👈 list of departments
-    is_hr = models.BooleanField(default=False)  # ✅ new field
+    department = ArrayField(models.CharField(max_length=100), default=list)
+    is_hr = models.BooleanField(default=False)
 
     def __str__(self):
         return f"{self.emp_id} - {self.name}"
 
 
+
 # -----------------------------
 # 2. SBU Table (used for M2M)
 # -----------------------------
+# in your models file (e.g., api/models.py or wherever SBU lives)
 class SBU(models.Model):
     name = models.CharField(max_length=100)  # Reviewer name
     email = models.EmailField(unique=True)   # Reviewer email
+    personal_email = models.EmailField(null=True, blank=True)  # NEW: optional personal email
     departments = models.JSONField(default=list)  # List of department names
 
     def __str__(self):
