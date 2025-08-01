@@ -1,6 +1,6 @@
 # api/serializers.py
 from rest_framework import serializers
-from .models import User
+from .models import User, Department, SBU, EmailTemplate
 from django.contrib.auth.hashers import check_password, make_password
 
 class UserRegisterSerializer(serializers.ModelSerializer):
@@ -21,3 +21,19 @@ class UserResponseSerializer(serializers.ModelSerializer):
     class Meta:
         model = User
         fields = ['id','emp_id', 'name', 'email', 'role', 'is_hr']
+
+class DepartmentSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = Department
+        fields = ['id', 'name', 'reviewers']
+
+class SBUSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = SBU
+        fields = ['id', 'name', 'email', 'departments']
+
+class EmailTemplateSerializer(serializers.ModelSerializer):
+    class Meta:
+        model = EmailTemplate
+        fields = ['purpose', 'subject', 'html_body']
+

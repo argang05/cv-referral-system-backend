@@ -23,4 +23,5 @@ urlpatterns = [
     path('api/referrals/', include('referral.urls')),
     path('api/reviews/', include('review.urls')), 
     path('api/hr-evaluation/', include('hr_evaluation.urls')),
+    path('api/admin-config/', include('admin_config.urls')),
 ]
