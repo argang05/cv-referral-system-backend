@@ -166,6 +166,9 @@ CSRF_TRUSTED_ORIGINS = [
 CSRF_COOKIE_SECURE = True  # Set to True in prod with HTTPS
 SESSION_COOKIE_SECURE = True
 
+SESSION_COOKIE_SAMESITE = 'None'
+CSRF_COOKIE_SAMESITE = 'None'
+
 # Database
 # https://docs.djangoproject.com/en/5.2/ref/settings/#databases
 
