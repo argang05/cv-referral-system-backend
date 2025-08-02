@@ -6,6 +6,7 @@ from rest_framework import status
 from api.models import Department, SBU, EmailTemplate
 from api.serializers import DepartmentSerializer, SBUSerializer, EmailTemplateSerializer
 from django.db import transaction, connection
+import json
 
 # Fetch all departments
 class DepartmentListView(APIView):
@@ -111,35 +112,56 @@ class SBUListCreateView(APIView):
 class SBUDetailView(APIView):
     def put(self, request, email):
         try:
-            sbu = SBU.objects.get(email=email)
-        except SBU.DoesNotExist:
-            return Response({"error": "SBU not found"}, status=404)
+            sbu = SBU.objects.filter(email__iexact=email).first()
+            if not sbu:
+                return Response({"error": "SBU not found"}, status=404)
+        except Exception:
+            return Response({"error": "Error fetching SBU"}, status=500)
 
-        new_email = request.data.get("email", email)
+        new_email = request.data.get("email", sbu.email)
         new_name = request.data.get("name", sbu.name)
-        departments = request.data.get("departments", sbu.departments)
+        incoming_departments = request.data.get("departments", None)
+        replace_flag = request.data.get("replace_departments", False)
 
-        # Ensure no *true duplicate* email (ignoring case) exists
-        if new_email.lower() != email.lower():
-            if SBU.objects.filter(email__iexact=new_email).exclude(email__iexact=email).exists():
+        # If email is being changed (case-insensitive), ensure no other record has it
+        if new_email.lower() != sbu.email.lower():
+            if SBU.objects.filter(email__iexact=new_email).exclude(pk=sbu.pk).exists():
                 return Response({"error": "Email already exists."}, status=400)
 
         try:
             with transaction.atomic():
-                # Update email with raw SQL
-                if new_email != email:
+                # Update email via raw SQL if only case differs (to avoid unique conflict issues on some DBs)
+                if new_email != sbu.email:
+                    # Direct SQL to safely rename without creating duplicate entry race
                     with connection.cursor() as cursor:
                         cursor.execute("""
-                            UPDATE api_sbu SET email = %s WHERE email = %s
-                        """, [new_email, email])
+                            UPDATE api_sbu SET email = %s WHERE id = %s
+                        """, [new_email, str(sbu.id)])
+                    # re-fetch to reflect change
+                    sbu = SBU.objects.get(pk=sbu.pk)
 
-                # Now update the other fields using ORM
-                sbu = SBU.objects.get(email=new_email)
+                # Update name
                 sbu.name = new_name
-                sbu.departments = departments
+
+                # Merge departments unless replace flag
+                if incoming_departments is not None:
+                    if replace_flag:
+                        sbu.departments = incoming_departments
+                    else:
+                        existing = sbu.departments or []
+                        # ensure both are lists
+                        if not isinstance(existing, list):
+                            try:
+                                existing = json.loads(existing)
+                            except:
+                                existing = []
+                        merged = list(dict.fromkeys([*existing, *incoming_departments]))
+                        sbu.departments = merged
+
+                # Save remaining fields
                 sbu.save()
 
-            return Response({"message": "SBU updated"})
+            return Response({"message": "SBU updated"}, status=status.HTTP_200_OK)
         except Exception as e:
             return Response({"error": str(e)}, status=500)
 
@@ -193,4 +215,9 @@ class EmailTemplateDetailView(APIView):
             serializer.save()
             return Response(serializer.data)
         return Response(serializer.errors, status=status.HTTP_400_BAD_REQUEST)
+
+class SBUListView(APIView):
+    def get(self, request):
+        sbus = SBU.objects.all().values('id', 'name', 'email')  # minimal info
+        return Response(list(sbus), status=status.HTTP_200_OK)
 
