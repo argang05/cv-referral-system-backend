@@ -272,8 +272,23 @@ class LogoutView(APIView):
         response.delete_cookie('refresh_token')
         return response
 
+class CookieJWTAuthentication(JWTAuthentication):
+    def get_raw_token(self, header):
+        # First try normal Authorization header
+        raw_token = super().get_raw_token(header)
+        if raw_token:
+            return raw_token
+
+        # Fallback to cookie named "access_token"
+        request = self.request
+        cookie_token = request.COOKIES.get("access_token")
+        if cookie_token:
+            return cookie_token
+
+        return None
+
 class MeView(APIView):
-    authentication_classes = [JWTAuthentication]
+    authentication_classes = [CookieJWTAuthentication]
     permission_classes = [IsAuthenticated]
 
     def get(self, request):
