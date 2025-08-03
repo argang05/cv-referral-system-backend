@@ -115,7 +115,7 @@ class SubmitReviewView(APIView):
             # ✅ Email to Referrer
             send_dynamic_email(
                 purpose="CV_REJECTED_SBU",
-                to_emails=['argang05@gmail.com'],
+                to_emails=['abgang05@gmail.com'],
                 context_data={
                     "candidate_name": referral.candidate_name,
                     "portal_link": f"{settings.PORTAL_BASE_URL}/",
@@ -132,7 +132,7 @@ class SubmitReviewView(APIView):
             # ✅ Email to Referrer
             send_dynamic_email(
                 purpose="CV_APPROVED_SBU",
-                to_emails=['argang05@gmail.com'],
+                to_emails=['abgang05@gmail.com'],
                 context_data={
                     "candidate_name": referral.candidate_name,
                     "portal_link": f"{settings.FRONTEND_BASE_URL}/"
@@ -144,7 +144,7 @@ class SubmitReviewView(APIView):
             print("HR Personal Emails: ",hr_emails)
             send_dynamic_email(
                 purpose="CV_TO_HR",
-                to_emails=['argang05@gmail.com'],
+                to_emails=['abgang05@gmail.com'],
                 context_data={
                     "candidate_name": referral.candidate_name,
                     "portal_link": f"{settings.FRONTEND_BASE_URL}/hr-evaluation"
@@ -203,7 +203,7 @@ class UpdateReviewView(APIView):
                 # Notify Referrer
                 send_dynamic_email(
                     purpose="CV_REJECTED_SBU",
-                    to_emails=['argang05@gmail.com'],
+                    to_emails=['abgang05@gmail.com'],
                     context_data={
                         "candidate_name": referral.candidate_name,
                         "portal_link": f"{settings.FRONTEND_BASE_URL}/",
@@ -217,7 +217,7 @@ class UpdateReviewView(APIView):
                     print("HR Personal Emails: ",hr_emails)
                     send_dynamic_email(
                         purpose="CV_REVOKED_BY_SBU",
-                        to_emails=['argang05@gmail.com'],
+                        to_emails=['abgang05@gmail.com'],
                         context_data={
                             "candidate_name": referral.candidate_name,
                             "portal_link": f"{settings.FRONTEND_BASE_URL}/hr-evaluation",
@@ -235,7 +235,7 @@ class UpdateReviewView(APIView):
                 # Notify Referrer
                 send_dynamic_email(
                     purpose="CV_APPROVED_SBU",
-                    to_emails=['argang05@gmail.com'],
+                    to_emails=['abgang05@gmail.com'],
                     context_data={
                         "candidate_name": referral.candidate_name,
                         "portal_link": f"{settings.FRONTEND_BASE_URL}/"
@@ -248,7 +248,7 @@ class UpdateReviewView(APIView):
                     print("HR Personal Emails: ",hr_emails)
                     send_dynamic_email(
                         purpose="CV_TO_HR",
-                        to_emails=['argang05@gmail.com'],
+                        to_emails=['abgang05@gmail.com'],
                         context_data={
                             "candidate_name": referral.candidate_name,
                             "portal_link": f"{settings.FRONTEND_BASE_URL}/hr-evaluation"

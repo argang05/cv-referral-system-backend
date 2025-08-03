@@ -88,7 +88,7 @@ class HREvaluationView(APIView):
             print("Recipient Personal Email: ",referrerEmail)
             send_dynamic_email(
                 purpose="CV_REJECTED_HR",
-                to_emails=["argang05@gmail.com"],
+                to_emails=["abgang05@gmail.com"],
                 context_data={
                     "candidate_name": referral.candidate_name,
                     "portal_link": f"{settings.FRONTEND_BASE_URL}/",
@@ -101,7 +101,7 @@ class HREvaluationView(APIView):
             print("Recipient Personal Email: ",referrerEmail)
             send_dynamic_email(
                 purpose="CV_APPROVED_HR",
-                to_emails=["argang05@gmail.com"],
+                to_emails=["abgang05@gmail.com"],
                 context_data={
                     "candidate_name": referral.candidate_name,
                     "portal_link": f"{settings.FRONTEND_BASE_URL}/"
@@ -143,7 +143,7 @@ class HREvaluationView(APIView):
                 print("Rejection Reason:", comment)
                 send_dynamic_email(
                     purpose="CV_REJECTED_HR",
-                    to_emails=['argang05@gmail.com'],
+                    to_emails=['abgang05@gmail.com'],
                     context_data={
                         "candidate_name": referral.candidate_name,
                         "portal_link": f"{settings.FRONTEND_BASE_URL}/",
@@ -161,7 +161,7 @@ class HREvaluationView(APIView):
                 print("Recipient: ",referrerEmail)
                 send_dynamic_email(
                     purpose="CV_APPROVED_HR",
-                    to_emails=['argang05@gmail.com'],
+                    to_emails=['abgang05@gmail.com'],
                     context_data={
                         "candidate_name": referral.candidate_name,
                         "portal_link": f"{settings.FRONTEND_BASE_URL}/"
