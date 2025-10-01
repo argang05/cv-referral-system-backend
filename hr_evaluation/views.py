@@ -27,6 +27,7 @@ class HREvaluationView(APIView):
                 "candidate_name": r.candidate_name,
                 "candidate_type": r.candidate_type,
                 "submitted_at": r.submitted_at,
+                "referral_reason_type": r.referral_reason_type,  # ✅ Added
                 "considered_at": latest_review.reviewed_at if latest_review else None,
                 "final_at": latest_eval.updated_at if latest_eval else None,
                 "current_status": r.current_status,

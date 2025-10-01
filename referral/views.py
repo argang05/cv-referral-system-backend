@@ -20,13 +20,14 @@ class SubmitReferralView(APIView):
         emp_id = request.data.get("emp_id")
         candidate_name = request.data.get("candidate_name")
         candidate_type = request.data.get("candidate_type")
-        sbu_emails = request.data.get("sbu_emails", [])  # ✅ fixed line
+        referral_reason_type = request.data.get("referral_reason_type")  # ✅ New field
+        sbu_emails = request.data.get("sbu_emails", [])
         cv_url = request.data.get("cv_url")
         additional_comment = request.data.get("additional_comment", "")
 
-        print("SBU Emails: ",sbu_emails)
+        print("SBU Emails: ", sbu_emails)
 
-        if not (emp_id and candidate_name and candidate_type and sbu_emails and cv_url):
+        if not (emp_id and candidate_name and candidate_type and sbu_emails and cv_url and referral_reason_type):
             return Response({"error": "Missing required fields."}, status=400)
 
         try:
@@ -38,13 +39,12 @@ class SubmitReferralView(APIView):
             referrer=user,
             candidate_name=candidate_name,
             candidate_type=candidate_type,
+            referral_reason_type=referral_reason_type,   # ✅ Save new field
             cv_url=cv_url,
             submitted_at=now(),
             current_status="PENDING_REVIEW",
             additional_comment=additional_comment
         )
-
-        
 
         matched_sbus = SBU.objects.filter(email__in=sbu_emails)
         print("Matched SBUs:", matched_sbus.count())
@@ -55,10 +55,9 @@ class SubmitReferralView(APIView):
 
         portal_link = f"{settings.FRONTEND_BASE_URL}/review-cv"
 
-
         send_dynamic_email(
             purpose='CV_TO_SBU',
-            to_emails=['abgang05@gmail.com'], #replace with recipients variable when ready to test.
+            to_emails=['abgang05@gmail.com'],  # 🔄 replace with recipients later
             context_data={
                 'candidate_name': referral.candidate_name,
                 'portal_link': portal_link
@@ -66,6 +65,7 @@ class SubmitReferralView(APIView):
         )
 
         return Response({"message": "Referral submitted successfully."}, status=201)
+
 
 # referral/views.py
 class MyReferralsView(APIView):
@@ -92,6 +92,7 @@ class MyReferralsView(APIView):
                 "id": r.id,
                 "candidate_name": r.candidate_name,
                 "candidate_type": r.candidate_type,
+                "referral_reason_type": r.referral_reason_type,  # ✅ Added
                 "submitted_at": r.submitted_at,
                 "current_status": r.current_status,
                 "cv_url": r.cv_url,
@@ -123,9 +124,8 @@ class MyReferralsView(APIView):
 
         return Response(data)
 
-
 class UpdateReferralView(APIView):
-    parser_classes = [JSONParser]  # ✅ Changed from FormParser/MultiPartParser
+    parser_classes = [JSONParser]
     permission_classes = [AllowAny]
 
     def put(self, request, referral_id):
@@ -142,31 +142,27 @@ class UpdateReferralView(APIView):
         # Update fields
         referral.candidate_name = request.data.get('candidate_name', referral.candidate_name)
         referral.candidate_type = request.data.get('candidate_type', referral.candidate_type)
+        referral.referral_reason_type = request.data.get('referral_reason_type', referral.referral_reason_type)  # ✅ NEW
         referral.additional_comment = request.data.get('additional_comment', referral.additional_comment)
 
-        # ✅ Accept pre-uploaded CV URL from frontend
         cv_url = request.data.get('cv_url')
         if cv_url:
             referral.cv_url = cv_url
 
         referral.save()
+
         recipients = [sbu.personal_email for sbu in referral.sbus.all()]
         print("Recipients:", recipients) 
         send_dynamic_email(
             purpose="CV_UPDATED_SBU",
-            to_emails=["abgang05@gmail.com"], # ✅ Set this to recipients to see in action
+            to_emails=["abgang05@gmail.com"],  # Replace later with recipients
             context_data={
                 "candidate_name": referral.candidate_name,
                 "portal_link": f"{settings.FRONTEND_BASE_URL}/review-cv"
             }
         )
-        return Response(
-            {
-                "message": "Referral updated successfully.",
-                # "referral": ReferralSerializer(referral).data
-        }, 
-        status=200)
-        
+        return Response({"message": "Referral updated successfully."}, status=200)
+
 class DeleteReferralView(APIView):
     permission_classes = [AllowAny]
 

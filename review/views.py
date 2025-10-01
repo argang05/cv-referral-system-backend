@@ -49,6 +49,7 @@ class CVsForReview(APIView):
                 "candidate_name": r.candidate_name,
                 "candidate_type": r.candidate_type,
                 "submitted_at": r.submitted_at,
+                "referral_reason_type": r.referral_reason_type,  # ✅ Added
                 "current_status": r.current_status,
                 "rejection_stage": r.rejection_stage,
                 "rejection_reason": r.rejection_reason,

@@ -69,9 +69,19 @@ class Referral(models.Model):
         ('HR', 'HR'),
     ]
 
+    REFERRAL_REASON_CHOICES = [
+        ('PERSONAL_CONNECTION', 'Personal Connection Referral'),
+        ('TALENT_BASED', 'Referral Based on Talent'),
+    ]
+
     referrer = models.ForeignKey(User, to_field='emp_id', db_column='referrer_emp_id', on_delete=models.CASCADE)
     candidate_name = models.CharField(max_length=100)
     candidate_type = models.CharField(max_length=20, choices=CANDIDATE_TYPE_CHOICES)
+    referral_reason_type = models.CharField(   # ✅ NEW FIELD
+        max_length=30,
+        choices=REFERRAL_REASON_CHOICES,
+        default='PERSONAL_CONNECTION'
+    )
     sbus = models.ManyToManyField(SBU)
     cv_url = models.TextField()
     submitted_at = models.DateTimeField(auto_now_add=True)
