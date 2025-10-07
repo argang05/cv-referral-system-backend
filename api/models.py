@@ -15,17 +15,33 @@ class User(models.Model):
         ('HR', 'HR'),
         ('ADMIN', 'Admin'),
     ]
+
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     emp_id = models.CharField(max_length=20, unique=True)
     name = models.CharField(max_length=100)
     email = models.EmailField(unique=True)
-    personal_email = models.EmailField(null=True, blank=True)  # ✅ new field
+    personal_email = models.EmailField(null=True, blank=True)
     password_og = models.TextField()
     password_hash = models.TextField()
     role = models.CharField(max_length=20, choices=ROLE_CHOICES)
     is_active = models.BooleanField(default=True)
     department = ArrayField(models.CharField(max_length=100), default=list)
     is_hr = models.BooleanField(default=False)
+
+    # 🔽 Newly added fields (from Excel headers)
+    reporting_manager_emp_id = models.CharField(max_length=20, null=True, blank=True)
+    reporting_manager_name = models.CharField(max_length=100, null=True, blank=True)
+    band = models.CharField(max_length=10, null=True, blank=True)
+    designation = models.CharField(max_length=100, null=True, blank=True)
+    sub_bu = models.CharField(max_length=100, null=True, blank=True)
+
+    manager = models.ForeignKey(
+    'self',
+    null=True,
+    blank=True,
+    on_delete=models.SET_NULL,
+    related_name='subordinates'
+    )
 
     def __str__(self):
         return f"{self.emp_id} - {self.name}"
@@ -70,17 +86,20 @@ class Referral(models.Model):
     ]
 
     REFERRAL_REASON_CHOICES = [
-        ('PERSONAL_CONNECTION', 'Personal Connection Referral'),
-        ('TALENT_BASED', 'Referral Based on Talent'),
-    ]
+            ('COURTESY', 'Courtesy Referral : Shared out of obligation or goodwill (e.g., customer, family, or acquaintance referral not aligned to any open role).'),
+            ('POTENTIAL_FIT', 'Potential Fit Referral : Candidate with a strong background/skills; evaluation depends on role fitment and mutual interest.'),
+            ('DIRECT_ROLE_FIT', 'Direct Role Fit Referral : Candidate clearly aligned with an existing open position and worth evaluating formally.'),
+            ('INTERNAL_NETWORK', 'Internal Network Referral : Former colleague, vendor contact, or past intern with prior association with Tor or related teams.'),
+            ('STRATEGIC', 'Strategic Referral : High-value or niche skillset candidate referred by leadership or key partner, considered for special review.'),
+        ]
 
     referrer = models.ForeignKey(User, to_field='emp_id', db_column='referrer_emp_id', on_delete=models.CASCADE)
     candidate_name = models.CharField(max_length=100)
     candidate_type = models.CharField(max_length=20, choices=CANDIDATE_TYPE_CHOICES)
-    referral_reason_type = models.CharField(   # ✅ NEW FIELD
+    referral_reason_type = models.CharField(
         max_length=30,
         choices=REFERRAL_REASON_CHOICES,
-        default='PERSONAL_CONNECTION'
+        default='COURTESY'
     )
     sbus = models.ManyToManyField(SBU)
     cv_url = models.TextField()
@@ -193,3 +212,39 @@ class EmailTemplate(models.Model):
 
     def __str__(self):
         return self.get_purpose_display()
+
+class JobVacancy(models.Model):
+    job_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    job_title = models.CharField(max_length=255)
+    job_description = models.TextField()
+    work_experience = models.CharField(max_length=100, help_text="Example: 2-4 years")
+    job_desc_document_url = models.URLField(blank=True, null=True)
+    
+    MODE_CHOICES = [
+        ('WFH', 'Work From Home'),
+        ('OFFICE', 'In Office'),
+        ('HYBRID', 'Hybrid'),
+    ]
+    mode = models.CharField(max_length=10, choices=MODE_CHOICES, default='OFFICE')
+    location = models.CharField(max_length=255, blank=True, null=True)
+    
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    def __str__(self):
+        return f"{self.job_title} ({self.job_id})"
+
+
+class JobApplication(models.Model):
+    applicant_id = models.UUIDField(default=uuid.uuid4, editable=False, unique=True)
+    job = models.ForeignKey('JobVacancy', on_delete=models.CASCADE, related_name="applicants")
+    name = models.CharField(max_length=255)
+    cv_url = models.URLField()
+    appliers_emp_id = models.CharField(max_length=20, null=True, blank=True)  # ✅ track which employee applied
+    applied_at = models.DateTimeField(auto_now_add=True)
+
+    # ✅ Make review_decision truly optional
+    review_decision = models.JSONField(null=True, blank=True, default=None)
+
+    def __str__(self):
+        return f"{self.name} applied for {self.job.job_title}"

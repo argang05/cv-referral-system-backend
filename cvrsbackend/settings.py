@@ -72,6 +72,7 @@ INSTALLED_APPS = [
     'referral',
     'review',
     'hr_evaluation',
+    'job_vacancy',
 ]
 
 REST_FRAMEWORK = {
