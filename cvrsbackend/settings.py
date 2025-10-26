@@ -148,7 +148,8 @@ ALLOWED_HOSTS = [
     '127.0.0.1',  # For local development
     'cv-referral-system-frontend.vercel.app',
     'cv-referral-system-frontend-git-main-abhirup-gangulys-projects.vercel.app',
-    'cv-referral-system-frontend-abzx4yerd-abhirup-gangulys-projects.vercel.app'
+    'cv-referral-system-frontend-abzx4yerd-abhirup-gangulys-projects.vercel.app',
+    'cv-referral-system-backend-ymng.onrender.com'
 ]
 
 # For development, you can also use (but not recommended for production):
