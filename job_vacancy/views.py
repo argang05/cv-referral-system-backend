@@ -10,6 +10,9 @@ from .serializers import JobVacancySerializer, JobApplicationSerializer
 from django.shortcuts import get_object_or_404
 from api.utils import upload_to_supabase
 import re
+import logging
+
+logger = logging.getLogger(__name__)
 
 def sanitize_filename(filename: str) -> str:
     """
@@ -146,24 +149,62 @@ class JobApplicationDeleteView(APIView):
         except JobApplication.DoesNotExist:
             return Response({"error": "Application not found"}, status=status.HTTP_404_NOT_FOUND)
 
+# class UploadJobDescriptionView(APIView):
+#     permission_classes = [AllowAny]
+
+#     def post(self, request):
+#         try:
+#             file_obj = request.FILES.get("file")
+#             if not file_obj:
+#                 return Response({"error": "No file provided."}, status=status.HTTP_400_BAD_REQUEST)
+
+#             file_name = f"job_descriptions/{sanitize_filename(file_obj.name)}"
+#             uploaded_url = upload_to_supabase(file_obj, file_name)
+
+#             return Response(
+#                 {"message": "File uploaded successfully", "file_url": uploaded_url},
+#                 status=status.HTTP_200_OK
+#             )
+#         except Exception as e:
+#             return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+
 class UploadJobDescriptionView(APIView):
     permission_classes = [AllowAny]
 
     def post(self, request):
         try:
             file_obj = request.FILES.get("file")
+
             if not file_obj:
-                return Response({"error": "No file provided."}, status=status.HTTP_400_BAD_REQUEST)
+                return Response(
+                    {"error": "No file provided."},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
 
             file_name = f"job_descriptions/{sanitize_filename(file_obj.name)}"
-            uploaded_url = upload_to_supabase(file_obj, file_name)
+
+            uploaded_url = upload_to_supabase(
+                file_obj,
+                file_name
+            )
 
             return Response(
-                {"message": "File uploaded successfully", "file_url": uploaded_url},
+                {
+                    "message": "File uploaded successfully",
+                    "file_url": uploaded_url
+                },
                 status=status.HTTP_200_OK
             )
+
         except Exception as e:
-            return Response({"error": str(e)}, status=status.HTTP_500_INTERNAL_SERVER_ERROR)
+            print("Job description upload failed")
+            import traceback
+            traceback.print_exc()
+
+            return Response(
+                {"error": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
 
 
 class UploadApplicantCVView(APIView):
