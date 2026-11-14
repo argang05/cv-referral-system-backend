@@ -4,7 +4,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from .utils import upload_to_supabase, get_role_and_departments
 from rest_framework import status
-from .models import User
+from .models import Department, User, SBU
 from .serializers import UserRegisterSerializer, UserLoginSerializer, UserResponseSerializer
 from django.contrib.auth.hashers import check_password
 from django.contrib.auth.hashers import make_password
@@ -18,7 +18,7 @@ from rest_framework_simplejwt.authentication import JWTAuthentication
 from django.utils.timezone import now
 from datetime import timedelta
 from django.utils import timezone
-from api.models import Department
+# from api.models import Department
 from rest_framework.parsers import MultiPartParser, FormParser
 import re
 
@@ -358,3 +358,67 @@ class GetUserByEmpIDView(APIView):
             return Response(UserResponseSerializer(user).data)
         except User.DoesNotExist:
             return Response({"error": "User not found"}, status=404)
+
+class AvailableEmployeeListView(APIView):
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+
+        search = request.query_params.get("search", "").strip()
+
+        # Emails already registered as reviewers
+
+        reviewer_emails = (
+
+            SBU.objects
+
+            .values_list("email", flat=True)
+
+        )
+
+        queryset = User.objects.filter(
+
+            is_active=True
+
+        ).exclude(
+
+            email__in=reviewer_emails
+
+        )
+
+        if search:
+
+            queryset = queryset.filter(
+
+                name__icontains=search
+
+            ) | queryset.filter(
+
+                email__icontains=search
+
+            ) | queryset.filter(
+
+                emp_id__icontains=search
+
+            )
+
+        queryset = queryset.order_by("name")
+
+        data = [
+
+            {
+
+                "emp_id": user.emp_id,
+
+                "name": user.name,
+
+                "email": user.email,
+
+            }
+
+            for user in queryset
+
+        ]
+
+        return Response(data, status=status.HTTP_200_OK)

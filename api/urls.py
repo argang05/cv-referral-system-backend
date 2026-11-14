@@ -15,4 +15,13 @@ urlpatterns = [
     path('departments/', DepartmentListView.as_view(), name='departments'),
     path('update-profile/', UpdateUserProfile.as_view(), name='update-profile'),
     path('get-user-by-empid/', GetUserByEmpIDView.as_view(), name='get-user-by-empid'),
+    path(
+
+    "available-employees/",
+
+    AvailableEmployeeListView.as_view(),
+
+    name="available-employees",
+
+),
 ]
