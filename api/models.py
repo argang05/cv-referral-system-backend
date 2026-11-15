@@ -69,9 +69,12 @@ class SBU(models.Model):
 # -----------------------------
 class Referral(models.Model):
     CANDIDATE_TYPE_CHOICES = [
-        ('INTERN', 'Internship'),
-        ('FULL_TIME', 'Full Time'),
+        ('INTERN_FRESHER', 'Internship - Fresher'),
+        ('INTERN_EXPERIENCED', 'Internship - Experienced'),
+        ('FULL_TIME_FRESHER', 'Full Time - Fresher'),
+        ('FULL_TIME_EXPERIENCED', 'Full Time - Experienced'),
     ]
+
     STATUS_CHOICES = [
         ('PENDING_REVIEW', 'Pending Review'),
         ('REJECTED', 'Rejected'),
@@ -86,33 +89,95 @@ class Referral(models.Model):
     ]
 
     REFERRAL_REASON_CHOICES = [
-            ('COURTESY', 'Courtesy Referral : Shared out of obligation or goodwill (e.g., customer, family, or acquaintance referral not aligned to any open role).'),
-            ('POTENTIAL_FIT', 'Potential Fit Referral : Candidate with a strong background/skills; evaluation depends on role fitment and mutual interest.'),
-            ('DIRECT_ROLE_FIT', 'Direct Role Fit Referral : Candidate clearly aligned with an existing open position and worth evaluating formally.'),
-            ('INTERNAL_NETWORK', 'Internal Network Referral : Former colleague, vendor contact, or past intern with prior association with Tor or related teams.'),
-            ('STRATEGIC', 'Strategic Referral : High-value or niche skillset candidate referred by leadership or key partner, considered for special review.'),
-        ]
+        ('COURTESY', 'Courtesy Referral : Shared out of obligation or goodwill (e.g., customer, family, or acquaintance referral not aligned to any open role).'),
+        ('POTENTIAL_FIT', 'Potential Fit Referral : Candidate with a strong background/skills; evaluation depends on role fitment and mutual interest.'),
+        ('DIRECT_ROLE_FIT', 'Direct Role Fit Referral : Candidate clearly aligned with an existing open position and worth evaluating formally.'),
+        ('INTERNAL_NETWORK', 'Internal Network Referral : Former colleague, vendor contact, or past intern with prior association with Tor or related teams.'),
+        ('STRATEGIC', 'Strategic Referral : High-value or niche skillset candidate referred by leadership or key partner, considered for special review.'),
+    ]
 
-    referrer = models.ForeignKey(User, to_field='emp_id', db_column='referrer_emp_id', on_delete=models.CASCADE)
+    referrer = models.ForeignKey(
+        User,
+        to_field='emp_id',
+        db_column='referrer_emp_id',
+        on_delete=models.CASCADE
+    )
+
     candidate_name = models.CharField(max_length=100)
-    candidate_type = models.CharField(max_length=20, choices=CANDIDATE_TYPE_CHOICES)
+
+    # Increased from 20 to 30
+    candidate_type = models.CharField(
+        max_length=30,
+        choices=CANDIDATE_TYPE_CHOICES
+    )
+
     referral_reason_type = models.CharField(
         max_length=30,
         choices=REFERRAL_REASON_CHOICES,
         default='COURTESY'
     )
+
     sbus = models.ManyToManyField(SBU)
+
     cv_url = models.TextField()
+
     submitted_at = models.DateTimeField(auto_now_add=True)
-    current_status = models.CharField(max_length=30, choices=STATUS_CHOICES, default='PENDING_REVIEW')
+
+    current_status = models.CharField(
+        max_length=30,
+        choices=STATUS_CHOICES,
+        default='PENDING_REVIEW'
+    )
+
     additional_comment = models.TextField(blank=True, null=True)
-    rejection_stage = models.CharField(max_length=10, choices=REJECTION_STAGE_CHOICES, null=True, blank=True)  # ✅ New
-    rejection_reason = models.TextField(null=True, blank=True)
+
+    rejection_stage = models.CharField(
+        max_length=10,
+        choices=REJECTION_STAGE_CHOICES,
+        null=True,
+        blank=True
+    )
+
+    rejection_reason = models.TextField(
+        null=True,
+        blank=True
+    )
+
+    # ==========================================================
+    # Academic Details (filled by HR before SBU review)
+    # ==========================================================
+
+    tenth_percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+
+    twelfth_percentage = models.DecimalField(
+        max_digits=5,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+
+    graduation_cgpa = models.DecimalField(
+        max_digits=4,
+        decimal_places=2,
+        null=True,
+        blank=True
+    )
+
+    @property
+    def is_fresher(self):
+        return self.candidate_type.endswith("_FRESHER")
+
+    @property
+    def is_experienced(self):
+        return self.candidate_type.endswith("_EXPERIENCED")
 
     def __str__(self):
         return f"{self.candidate_name} (Referred by {self.referrer.name})"
-
-
 
 # -----------------------------
 # 4. Review Table
