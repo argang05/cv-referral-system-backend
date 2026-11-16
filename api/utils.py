@@ -270,3 +270,125 @@ def send_dynamic_email(purpose, to_emails, context_data):
         )
 
         return False
+
+# ============================================================
+# REVIEWER ROLE AND DEPARTMENT MAPPING
+# ============================================================
+
+REVIEWER_SBU_MAPPING = {
+    "Software Development": [
+        {"name": "Aditya Avinash Kelkar", "email": "aditya.kelkar@tor.ai"},
+        {"name": "Jatin Sudhakar Bhole", "email": "jatin.bhole@tor.ai"},
+        {"name": "Shweta Pawan Kulkarni", "email": "shweta.kulkarni@tor.ai"}
+    ],
+    "Hardware Development": [
+        {"name": "Aditya Avinash Kelkar", "email": "aditya.kelkar@tor.ai"},
+        {"name": "Milind Madhav Vaze", "email": "milind.vaze@tor.ai"},
+        {"name": "Shweta Pawan Kulkarni", "email": "shweta.kulkarni@tor.ai"}
+    ],
+    "Firmware Development": [
+        {"name": "Aditya Avinash Kelkar", "email": "aditya.kelkar@tor.ai"},
+        {"name": "Hrishikesh Raghunath Limaye", "email": "hrishikesh.limaye@tor.ai"},
+        {"name": "Shweta Pawan Kulkarni", "email": "shweta.kulkarni@tor.ai"}
+    ],
+    "Finance & Legal": [
+        {"name": "Aditya Kiran Paranjpe", "email": "aditya.paranjpe@tor.ai"},
+        {"name": "Priyanka Pawan Agarwal", "email": "priyanka.agarwal@tor.ai"},
+        {"name": "Shweta Pawan Kulkarni", "email": "shweta.kulkarni@tor.ai"}
+    ],
+    "Support-IOT": [
+        {"name": "Swati Prasad Chavare", "email": "swati.chavare@tor.ai"},
+        {"name": "Makarand Vinayak Jadhav", "email": "makarand.jadhav@tor.ai"},
+        {"name": "Shweta Pawan Kulkarni", "email": "shweta.kulkarni@tor.ai"}
+    ],
+    "Strategic Partnership and SEA": [
+        {"name": "Rajesh Vidydhar Kulkarni", "email": "rajesh.kulkarni@tor.ai"},
+        {"name": "Omkar Vishwas Pant", "email": "omkar.pant@tor.ai"},
+        {"name": "Shweta Pawan Kulkarni", "email": "shweta.kulkarni@tor.ai"}
+    ],
+    "Quality Assurance": [
+        {"name": "Aditya Avinash Kelkar", "email": "aditya.kelkar@tor.ai"},
+        {"name": "Milind Madhav Vaze", "email": "milind.vaze@tor.ai"},
+        {"name": "Ravindra Babasaheb Barbade", "email": "ravindra.barbade@tor.ai"},
+        {"name": "Shweta Pawan Kulkarni", "email": "shweta.kulkarni@tor.ai"}
+    ],
+    "Production": [
+        {"name": "Swati Prasad Chavare", "email": "swati.chavare@tor.ai"},
+        {"name": "Nilesh Bhausaheb Mungase", "email": "nilesh.mungase@tor.ai"},
+        {"name": "Shweta Pawan Kulkarni", "email": "shweta.kulkarni@tor.ai"}
+    ],
+    "Implementation": [
+        {"name": "Swati Prasad Chavare", "email": "swati.chavare@tor.ai"},
+        {"name": "Makarand Vinayak Jadhav", "email": "makarand.jadhav@tor.ai"},
+        {"name": "Shweta Pawan Kulkarni", "email": "shweta.kulkarni@tor.ai"}
+    ],
+    "Supply Chain Management": [
+        {"name": "Swati Prasad Chavare", "email": "swati.chavare@tor.ai"},
+        {"name": "Siddhi Sandip Phatak", "email": "siddhi.phatak@tor.ai"},
+        {"name": "Shweta Pawan Kulkarni", "email": "shweta.kulkarni@tor.ai"}
+    ],
+    "Business Development": [
+        {"name": "Rajesh Vidydhar Kulkarni", "email": "rajesh.kulkarni@tor.ai"},
+        {"name": "Ashish Arbindkumar Pathak Bharadwaj", "email": "ashish.bharadwaj@tor.ai"},
+        {"name": "Ganesh Manikrao Kamble", "email": "ganesh.kamble@tor.ai"},
+        {"name": "Shweta Pawan Kulkarni", "email": "shweta.kulkarni@tor.ai"}
+    ],
+    "Product Management": [
+        {"name": "Aditya Kiran Paranjpe", "email": "aditya.paranjpe@tor.ai"},
+        {"name": "Rohit Motilal Pandita", "email": "rohit.pandita@tor.ai"},
+        {"name": "Shweta Pawan Kulkarni", "email": "shweta.kulkarni@tor.ai"}
+    ],
+    "Marketing": [
+        {"name": "Rajesh Vidydhar Kulkarni", "email": "rajesh.kulkarni@tor.ai"},
+        {"name": "Ashish Arbindkumar Pathak Bharadwaj", "email": "ashish.bharadwaj@tor.ai"},
+        {"name": "Ganesh Manikrao Kamble", "email": "ganesh.kamble@tor.ai"},
+        {"name": "Shweta Pawan Kulkarni", "email": "shweta.kulkarni@tor.ai"}
+    ],
+    "Sales": [
+        {"name": "Rajesh Vidydhar Kulkarni", "email": "rajesh.kulkarni@tor.ai"},
+        {"name": "Vaibhav Pramodrao Dhole", "email": "vaibhav.dhole@tor.ai"},
+        {"name": "Shweta Pawan Kulkarni", "email": "shweta.kulkarni@tor.ai"}
+    ],
+    "Human Resource Management": [
+        {"name": "Aditya Kiran Paranjpe", "email": "aditya.paranjpe@tor.ai"},
+        {"name": "Abhishek Ganguly", "email": "abhishek.ganguly@tor.ai"},
+        {"name": "Shweta Pawan Kulkarni", "email": "shweta.kulkarni@tor.ai"}
+    ],
+    "Systems Management": [
+        {"name": "Aditya Avinash Kelkar", "email": "aditya.kelkar@tor.ai"},
+        {"name": "Jatin Sudhakar Bhole", "email": "jatin.bhole@tor.ai"},
+        {"name": "Shweta Pawan Kulkarni", "email": "shweta.kulkarni@tor.ai"}
+    ]
+}
+
+
+def get_role_and_departments(email: str):
+    """
+    Determine a user's role and assigned departments
+    from the existing reviewer mapping.
+
+    Returns:
+        (role, matched_departments, is_hr)
+    """
+
+    email = email.lower()
+    matched_departments = []
+
+    for dept, reviewers in REVIEWER_SBU_MAPPING.items():
+        for reviewer in reviewers:
+            if reviewer["email"].lower() == email:
+                matched_departments.append(dept)
+
+    is_hr = any(
+        "human resource" in dept.lower()
+        for dept in matched_departments
+    )
+
+    if matched_departments:
+        role = "REVIEWER"
+    else:
+        role = "EMPLOYEE"
+        matched_departments = ["NONE"]
+        is_hr = False
+
+    return role, matched_departments, is_hr
