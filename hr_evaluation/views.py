@@ -1,13 +1,18 @@
 from django.db import transaction
-from django.db.models import Prefetch
+from django.conf import settings
 
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
 
-from api.models import Referral, User, Review, HREvaluation
+from api.models import (
+    Referral,
+    User,
+    Review,
+    HREvaluation,
+)
+
 from api.utils import send_dynamic_email
-from django.conf import settings
 
 
 # ==========================================================
@@ -41,29 +46,30 @@ FINAL_STATUSES = {
 
 def serialize_review(review):
     """
-    Serialize an individual SBU review.
+    Serialize one SBU review.
 
-    Includes:
-    - Reviewer identity
-    - Decision
-    - Comment
-    - Timestamp
+    Every review is an independent historical record.
     """
 
     if review is None:
         return None
 
+    reviewer = review.reviewer
+
     return {
         "id": review.id,
+
         "decision": review.decision,
+
         "comment": review.comment,
+
         "reviewed_at": review.reviewed_at,
 
         "reviewed_by": {
-            "emp_id": review.reviewer.emp_id,
-            "name": review.reviewer.name,
-            "email": review.reviewer.email,
-        },
+            "emp_id": reviewer.emp_id,
+            "name": reviewer.name,
+            "email": reviewer.email,
+        } if reviewer else None,
     }
 
 
@@ -72,30 +78,52 @@ def serialize_review(review):
 # ==========================================================
 
 def serialize_hr_evaluation(evaluation):
+    """
+    Serialize the latest HR evaluation.
+    """
 
     if evaluation is None:
         return None
 
+    updated_by = evaluation.updated_by
+
     return {
         "id": evaluation.id,
+
         "stage": evaluation.stage,
+
         "status": evaluation.status,
+
         "comment": evaluation.comment,
+
         "updated_at": evaluation.updated_at,
-        "updated_by": evaluation.updated_by.name,
+
+        "updated_by": (
+            updated_by.name
+            if updated_by
+            else "Unknown HR Employee"
+        ),
     }
 
 
 # ==========================================================
-# VALIDATE HR EVALUATION
+# VALIDATE HR EVALUATION PAYLOAD
 # ==========================================================
 
 def validate_hr_evaluation_payload(data):
+    """
+    Validate POST/PUT payload.
+
+    Returns:
+        (validated_data, error)
+    """
 
     referral_id = data.get("referral_id")
     emp_id = data.get("emp_id")
+
     status = data.get("status")
     stage = data.get("stage") or ""
+
     comment = data.get("comment")
 
     if not referral_id:
@@ -111,10 +139,14 @@ def validate_hr_evaluation_payload(data):
         return None, "HR evaluation comment is required."
 
     if status == "REJECTED":
+
         if stage not in VALID_HR_STAGES:
-            return None, "A valid rejection stage is required."
+            return None, (
+                "A valid rejection stage is required."
+            )
 
     elif stage and stage not in VALID_HR_STAGES:
+
         return None, "Invalid HR evaluation stage."
 
     return {
@@ -127,30 +159,34 @@ def validate_hr_evaluation_payload(data):
 
 
 # ==========================================================
-# APPLY HR DECISION
+# APPLY HR DECISION TO REFERRAL
 # ==========================================================
 
 def apply_hr_decision(referral, status, comment):
     """
-    Synchronize Referral.current_status
-    with the HR evaluation decision.
+    Synchronize the referral with the HR evaluation.
+
+    Does not write to nonexistent Referral.final_at.
     """
 
     if status == "IN_PROGRESS":
 
         referral.current_status = "CONSIDERED"
+
         referral.rejection_stage = None
         referral.rejection_reason = None
 
     elif status == "ACCEPTED":
 
         referral.current_status = "FINAL_ACCEPTED"
+
         referral.rejection_stage = None
         referral.rejection_reason = None
 
     elif status == "REJECTED":
 
         referral.current_status = "FINAL_REJECTED"
+
         referral.rejection_stage = "HR"
         referral.rejection_reason = comment
 
@@ -167,16 +203,33 @@ def apply_hr_decision(referral, status, comment):
 # SEND HR NOTIFICATION
 # ==========================================================
 
-def send_hr_evaluation_notification(referral, status, comment):
+def send_hr_evaluation_notification(
+    referral,
+    status,
+    comment,
+):
+    """
+    Send notification for final HR decisions only.
+
+    Preserves the existing testing recipient.
+    """
 
     if status == "REJECTED":
 
         send_dynamic_email(
             purpose="CV_REJECTED_HR",
-            to_emails=["abgang05@gmail.com"],
+
+            to_emails=[
+                "abgang05@gmail.com",
+            ],
+
             context_data={
                 "candidate_name": referral.candidate_name,
-                "portal_link": f"{settings.FRONTEND_BASE_URL}/",
+
+                "portal_link": (
+                    f"{settings.FRONTEND_BASE_URL}/"
+                ),
+
                 "rejection_reason": comment,
             },
         )
@@ -185,10 +238,17 @@ def send_hr_evaluation_notification(referral, status, comment):
 
         send_dynamic_email(
             purpose="CV_APPROVED_HR",
-            to_emails=["abgang05@gmail.com"],
+
+            to_emails=[
+                "abgang05@gmail.com",
+            ],
+
             context_data={
                 "candidate_name": referral.candidate_name,
-                "portal_link": f"{settings.FRONTEND_BASE_URL}/",
+
+                "portal_link": (
+                    f"{settings.FRONTEND_BASE_URL}/"
+                ),
             },
         )
 
@@ -202,10 +262,26 @@ class HREvaluationView(APIView):
     permission_classes = [AllowAny]
 
     # ======================================================
-    # GET - FETCH HR REFERRALS WITH SBU REVIEW HISTORY
+    # GET - HR REFERRALS + COMPLETE SBU HISTORY
     # ======================================================
 
     def get(self, request):
+        """
+        Fetch all referrals eligible for HR evaluation.
+
+        Returns:
+        - Candidate details
+        - Referrer details
+        - Latest SBU recommendation
+        - Complete SBU review history
+        - Latest HR evaluation
+        - Workflow flags
+        - Progress timestamps
+        """
+
+        # --------------------------------------------------
+        # FETCH ELIGIBLE REFERRALS
+        # --------------------------------------------------
 
         referrals = (
             Referral.objects
@@ -217,55 +293,52 @@ class HREvaluationView(APIView):
                 ]
             )
             .select_related("referrer")
-            .prefetch_related(
-                "sbus",
-
-                Prefetch(
-                    "review_set",
-                    queryset=(
-                        Review.objects
-                        .select_related("reviewer")
-                        .order_by("-reviewed_at", "-id")
-                    ),
-                    to_attr="prefetched_reviews",
-                ),
-
-                Prefetch(
-                    "hrevaluation_set",
-                    queryset=(
-                        HREvaluation.objects
-                        .select_related("updated_by")
-                        .order_by("-updated_at", "-id")
-                    ),
-                    to_attr="prefetched_hr_evaluations",
-                ),
-            )
-            .distinct()
+            .prefetch_related("sbus")
             .order_by("-submitted_at")
         )
 
         response_data = []
 
+        # --------------------------------------------------
+        # PROCESS EACH REFERRAL
+        # --------------------------------------------------
+
         for referral in referrals:
 
-            # ----------------------------------------------
-            # SBU REVIEW HISTORY
-            # ----------------------------------------------
+            # ==============================================
+            # FETCH COMPLETE SBU REVIEW HISTORY
+            # ==============================================
 
-            reviews = referral.prefetched_reviews
+            reviews = list(
+                Review.objects
+                .filter(referral=referral)
+                .select_related("reviewer")
+                .order_by("-id")
+            )
 
-            latest_review = reviews[0] if reviews else None
+            # Latest review = newest appended record
+            latest_review = (
+                reviews[0]
+                if reviews
+                else None
+            )
 
+            # Complete history, newest first
             review_history = [
                 serialize_review(review)
                 for review in reviews
             ]
 
-            # ----------------------------------------------
-            # HR EVALUATION
-            # ----------------------------------------------
+            # ==============================================
+            # FETCH HR EVALUATION
+            # ==============================================
 
-            evaluations = referral.prefetched_hr_evaluations
+            evaluations = list(
+                HREvaluation.objects
+                .filter(referral=referral)
+                .select_related("updated_by")
+                .order_by("-updated_at", "-id")
+            )
 
             latest_hr_evaluation = (
                 evaluations[0]
@@ -273,19 +346,33 @@ class HREvaluationView(APIView):
                 else None
             )
 
-            hr_started = latest_hr_evaluation is not None
+            # ==============================================
+            # WORKFLOW FLAGS
+            # ==============================================
+
+            hr_started = (
+                latest_hr_evaluation is not None
+            )
 
             is_finalized = (
                 referral.current_status in FINAL_STATUSES
             )
 
-            # ----------------------------------------------
-            # TIMESTAMPS
-            # ----------------------------------------------
+            can_edit_sbu_review = (
+                not hr_started
+                and not is_finalized
+            )
+
+            # ==============================================
+            # PROGRESS TIMESTAMPS
+            # ==============================================
 
             considered_at = (
                 latest_review.reviewed_at
-                if latest_review
+                if (
+                    latest_review
+                    and latest_review.decision == "CONSIDERED"
+                )
                 else None
             )
 
@@ -301,17 +388,48 @@ class HREvaluationView(APIView):
                 else None
             )
 
-            # ----------------------------------------------
-            # RESPONSE
-            # ----------------------------------------------
+            # ==============================================
+            # SERIALIZE ASSIGNED SBUS
+            # ==============================================
+
+            sbus = [
+                {
+                    "name": sbu.name,
+                    "email": sbu.email,
+                }
+                for sbu in referral.sbus.all()
+            ]
+
+            # ==============================================
+            # SERIALIZE REFERRER
+            # ==============================================
+
+            referrer = referral.referrer
+
+            referrer_data = {
+                "emp_id": referrer.emp_id,
+                "name": referrer.name,
+                "email": referrer.email,
+            } if referrer else None
+
+            # ==============================================
+            # BUILD RESPONSE
+            # ==============================================
 
             response_data.append({
+
+                # ------------------------------------------
+                # REFERRAL DETAILS
+                # ------------------------------------------
 
                 "id": referral.id,
 
                 "candidate_name": referral.candidate_name,
+
                 "candidate_email": referral.candidate_email,
+
                 "candidate_phone": referral.candidate_phone,
+
                 "candidate_type": referral.candidate_type,
 
                 "submitted_at": referral.submitted_at,
@@ -323,6 +441,7 @@ class HREvaluationView(APIView):
                 "current_status": referral.current_status,
 
                 "rejection_stage": referral.rejection_stage,
+
                 "rejection_reason": referral.rejection_reason,
 
                 "cv_url": referral.cv_url,
@@ -332,32 +451,24 @@ class HREvaluationView(APIView):
                 ),
 
                 # ------------------------------------------
-                # ASSIGNED SBU REVIEWERS
+                # SBU ASSIGNMENTS
                 # ------------------------------------------
 
-                "sbus": [
-                    {
-                        "name": sbu.name,
-                        "email": sbu.email,
-                    }
-                    for sbu in referral.sbus.all()
-                ],
+                "sbus": sbus,
 
                 # ------------------------------------------
                 # REFERRER
                 # ------------------------------------------
 
-                "referrer": {
-                    "emp_id": referral.referrer.emp_id,
-                    "name": referral.referrer.name,
-                    "email": referral.referrer.email,
-                },
+                "referrer": referrer_data,
 
                 # ------------------------------------------
                 # LATEST SBU REVIEW
                 # ------------------------------------------
 
-                "review": serialize_review(latest_review),
+                "review": serialize_review(
+                    latest_review
+                ),
 
                 # ------------------------------------------
                 # COMPLETE SBU REVIEW HISTORY
@@ -382,12 +493,11 @@ class HREvaluationView(APIView):
                 "is_finalized": is_finalized,
 
                 "can_edit_sbu_review": (
-                    not hr_started
-                    and not is_finalized
+                    can_edit_sbu_review
                 ),
 
                 # ------------------------------------------
-                # PROGRESS BAR TIMESTAMPS
+                # PROGRESS TIMESTAMPS
                 # ------------------------------------------
 
                 "considered_at": considered_at,
@@ -398,13 +508,15 @@ class HREvaluationView(APIView):
         return Response(response_data)
 
     # ======================================================
-    # POST - INITIAL HR EVALUATION
+    # POST - CREATE INITIAL HR EVALUATION
     # ======================================================
 
     def post(self, request):
 
-        validated_data, error = validate_hr_evaluation_payload(
-            request.data
+        validated_data, error = (
+            validate_hr_evaluation_payload(
+                request.data
+            )
         )
 
         if error:
@@ -415,32 +527,42 @@ class HREvaluationView(APIView):
 
         referral_id = validated_data["referral_id"]
         emp_id = validated_data["emp_id"]
+
         status = validated_data["status"]
         stage = validated_data["stage"]
         comment = validated_data["comment"]
 
-        # ----------------------------------------------
-        # VALIDATE HR EMPLOYEE
-        # ----------------------------------------------
+        # --------------------------------------------------
+        # VALIDATE HR USER
+        # --------------------------------------------------
 
         try:
-            user = User.objects.get(emp_id=emp_id)
+            user = User.objects.get(
+                emp_id=emp_id
+            )
 
         except User.DoesNotExist:
             return Response(
-                {"error": "HR employee not found."},
+                {
+                    "error": "HR employee not found."
+                },
                 status=404,
             )
 
         if not user.is_hr:
             return Response(
-                {"error": "Only HR employees can evaluate referrals."},
+                {
+                    "error": (
+                        "Only HR employees can "
+                        "submit HR evaluations."
+                    )
+                },
                 status=403,
             )
 
-        # ----------------------------------------------
+        # --------------------------------------------------
         # ATOMIC TRANSACTION
-        # ----------------------------------------------
+        # --------------------------------------------------
 
         with transaction.atomic():
 
@@ -453,63 +575,80 @@ class HREvaluationView(APIView):
 
             except Referral.DoesNotExist:
                 return Response(
-                    {"error": "Referral not found."},
+                    {
+                        "error": "Referral not found."
+                    },
                     status=404,
                 )
 
-            # Prevent duplicate evaluations
+            # ----------------------------------------------
+            # PREVENT DUPLICATE HR EVALUATIONS
+            # ----------------------------------------------
 
-            if HREvaluation.objects.filter(
-                referral=referral
-            ).exists():
+            existing_evaluation = (
+                HREvaluation.objects
+                .filter(referral=referral)
+                .exists()
+            )
+
+            if existing_evaluation:
 
                 return Response(
                     {
                         "error": (
                             "HR evaluation already exists. "
-                            "Use the update endpoint."
+                            "Please update the existing "
+                            "evaluation instead."
                         )
                     },
                     status=409,
                 )
 
             # ----------------------------------------------
-            # CHECK LATEST SBU DECISION
+            # VERIFY LATEST SBU RECOMMENDATION
             # ----------------------------------------------
 
             latest_review = (
                 Review.objects
                 .filter(referral=referral)
-                .order_by("-reviewed_at", "-id")
+                .order_by("-id")
                 .first()
             )
 
             if latest_review is None:
+
                 return Response(
                     {
                         "error": (
-                            "No SBU review exists for this referral."
+                            "No SBU review exists "
+                            "for this referral."
                         )
                     },
                     status=409,
                 )
 
             if latest_review.decision != "CONSIDERED":
+
                 return Response(
                     {
                         "error": (
-                            "The latest SBU decision does not "
-                            "recommend this candidate for HR evaluation."
+                            "The latest SBU reviewer "
+                            "has not recommended "
+                            "this candidate for "
+                            "HR evaluation."
                         )
                     },
                     status=409,
                 )
 
             if referral.current_status != "CONSIDERED":
+
                 return Response(
                     {
                         "error": (
-                            "Referral is not eligible for HR evaluation."
+                            "This referral is not "
+                            "currently eligible "
+                            "for HR evaluation."
                         )
                     },
                     status=409,
@@ -532,13 +671,13 @@ class HREvaluationView(APIView):
             # ----------------------------------------------
 
             apply_hr_decision(
-                referral,
-                status,
-                comment,
+                referral=referral,
+                status=status,
+                comment=comment,
             )
 
             # ----------------------------------------------
-            # NOTIFY ONLY ON FINAL DECISION
+            # SEND EMAIL ON FINAL DECISION ONLY
             # ----------------------------------------------
 
             if status in {"ACCEPTED", "REJECTED"}:
@@ -553,19 +692,23 @@ class HREvaluationView(APIView):
 
         return Response(
             {
-                "message": "HR evaluation submitted successfully."
+                "message": (
+                    "HR evaluation submitted successfully."
+                )
             },
             status=201,
         )
 
     # ======================================================
-    # PUT - UPDATE HR EVALUATION
+    # PUT - UPDATE EXISTING HR EVALUATION
     # ======================================================
 
     def put(self, request):
 
-        validated_data, error = validate_hr_evaluation_payload(
-            request.data
+        validated_data, error = (
+            validate_hr_evaluation_payload(
+                request.data
+            )
         )
 
         if error:
@@ -576,32 +719,42 @@ class HREvaluationView(APIView):
 
         referral_id = validated_data["referral_id"]
         emp_id = validated_data["emp_id"]
+
         status = validated_data["status"]
         stage = validated_data["stage"]
         comment = validated_data["comment"]
 
-        # ----------------------------------------------
-        # VALIDATE HR EMPLOYEE
-        # ----------------------------------------------
+        # --------------------------------------------------
+        # VALIDATE HR USER
+        # --------------------------------------------------
 
         try:
-            user = User.objects.get(emp_id=emp_id)
+            user = User.objects.get(
+                emp_id=emp_id
+            )
 
         except User.DoesNotExist:
             return Response(
-                {"error": "HR employee not found."},
+                {
+                    "error": "HR employee not found."
+                },
                 status=404,
             )
 
         if not user.is_hr:
             return Response(
-                {"error": "Only HR employees can update evaluations."},
+                {
+                    "error": (
+                        "Only HR employees can "
+                        "update HR evaluations."
+                    )
+                },
                 status=403,
             )
 
-        # ----------------------------------------------
-        # ATOMIC UPDATE
-        # ----------------------------------------------
+        # --------------------------------------------------
+        # ATOMIC TRANSACTION
+        # --------------------------------------------------
 
         with transaction.atomic():
 
@@ -614,9 +767,15 @@ class HREvaluationView(APIView):
 
             except Referral.DoesNotExist:
                 return Response(
-                    {"error": "Referral not found."},
+                    {
+                        "error": "Referral not found."
+                    },
                     status=404,
                 )
+
+            # ----------------------------------------------
+            # FIND EXISTING EVALUATION
+            # ----------------------------------------------
 
             evaluation = (
                 HREvaluation.objects
@@ -626,11 +785,13 @@ class HREvaluationView(APIView):
             )
 
             if evaluation is None:
+
                 return Response(
                     {
                         "error": (
                             "HR evaluation not found. "
-                            "Submit an initial evaluation first."
+                            "Please submit an initial "
+                            "evaluation first."
                         )
                     },
                     status=404,
@@ -662,13 +823,13 @@ class HREvaluationView(APIView):
             # ----------------------------------------------
 
             apply_hr_decision(
-                referral,
-                status,
-                comment,
+                referral=referral,
+                status=status,
+                comment=comment,
             )
 
             # ----------------------------------------------
-            # SEND EMAIL ONLY WHEN FINAL STATUS CHANGES
+            # NOTIFY WHEN FINAL DECISION CHANGES
             # ----------------------------------------------
 
             if (
@@ -686,7 +847,9 @@ class HREvaluationView(APIView):
 
         return Response(
             {
-                "message": "HR evaluation updated successfully."
+                "message": (
+                    "HR evaluation updated successfully."
+                )
             },
             status=200,
         )
