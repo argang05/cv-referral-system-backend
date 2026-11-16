@@ -1,263 +1,732 @@
+from django.conf import settings
+from django.db import transaction
+from django.db.models import Prefetch
+from django.utils import timezone
+
 from rest_framework.views import APIView
 from rest_framework.response import Response
 from rest_framework.permissions import AllowAny
-from api.models import Referral, Review, User
-from api.models import SBU, HREvaluation
-from django.utils import timezone
-from django.utils.timezone import now
-from django.core.mail import send_mail
+from rest_framework import status
+
+from api.models import (
+    Referral,
+    Review,
+    User,
+    HREvaluation,
+)
+
 from api.utils import send_dynamic_email
-from django.conf import settings
 
-class CVsForReview(APIView):
-    permission_classes = [AllowAny]
 
-    def get(self, request):
-        emp_id = request.GET.get("emp_id")
-        if not emp_id:
-            return Response({"error": "emp_id is required"}, status=400)
+# ==========================================================
+# Helpers
+# ==========================================================
 
-        try:
-            user = User.objects.get(emp_id=emp_id)
-        except User.DoesNotExist:
-            return Response({"error": "User not found"}, status=404)
+VALID_DECISIONS = {"CONSIDERED", "REJECTED"}
 
-        referrals = Referral.objects.filter(sbus__email=user.email).distinct()
-        data = []
 
-        for r in referrals:
-            review = Review.objects.filter(referral=r, reviewer=user).order_by('-reviewed_at').first()
-            hr_eval = HREvaluation.objects.filter(referral=r).order_by('-updated_at').first()
+def serialize_review(review):
+    """
+    Convert a Review instance into a frontend-friendly object.
+    """
 
-            review_data = {
-                "decision": review.decision,
-                "comment": review.comment,
-                "reviewed_at": review.reviewed_at,
-                "reviewed_by": review.reviewer.name
-            } if review else None
+    if review is None:
+        return None
 
-            if review and review.decision == 'REJECTED' and r.current_status != 'REJECTED':
-                r.current_status = 'REJECTED'
-                r.rejection_stage = 'SBU'
-                r.rejection_reason = review.comment
-                if not r.considered_at:
-                    r.considered_at = review.reviewed_at
-                r.save()
+    return {
+        "id": review.id,
+        "decision": review.decision,
+        "comment": review.comment,
+        "reviewed_at": review.reviewed_at,
+        "reviewed_by": {
+            "emp_id": review.reviewer.emp_id,
+            "name": review.reviewer.name,
+            "email": review.reviewer.email,
+        },
+    }
 
-            data.append({
-                "id": r.id,
-                "candidate_name": r.candidate_name,
-                "candidate_type": r.candidate_type,
-                "submitted_at": r.submitted_at,
-                "referral_reason_type": r.referral_reason_type,  # ✅ Added
-                "current_status": r.current_status,
-                "rejection_stage": r.rejection_stage,
-                "rejection_reason": r.rejection_reason,
-                "cv_url": r.cv_url,
-                "sbus": [{"name": s.name, "email": s.email} for s in r.sbus.all()],
-                "additional_comment": r.additional_comment,
-                "referrer": {
-                    "emp_id": r.referrer.emp_id,
-                    "name": r.referrer.name,
-                    "email": r.referrer.email
+
+def get_latest_review(referral):
+    """
+    The most recently CREATED review is the effective
+    SBU recommendation.
+
+    Ordering by ID gives us a deterministic sequence.
+    """
+
+    return (
+        Review.objects
+        .filter(referral=referral)
+        .select_related("reviewer")
+        .order_by("-id")
+        .first()
+    )
+
+
+def is_assigned_reviewer(referral, reviewer):
+    """
+    Confirm that the employee is assigned to this referral
+    through the SBU relationship.
+
+    Normalize email addresses to avoid case differences.
+    """
+
+    reviewer_email = (reviewer.email or "").strip().lower()
+
+    if not reviewer_email:
+        return False
+
+    return any(
+        (sbu.email or "").strip().lower() == reviewer_email
+        for sbu in referral.sbus.all()
+    )
+
+
+def has_hr_started(referral):
+    """
+    An existing HR evaluation record locks SBU decisions.
+
+    This assumes HR evaluation records are created only
+    when HR begins evaluating a candidate.
+    """
+
+    return HREvaluation.objects.filter(
+        referral=referral
+    ).exists()
+
+
+def validate_review_payload(request):
+    """
+    Validate decision, comment and employee ID.
+    """
+
+    emp_id = request.data.get("emp_id")
+
+    decision = request.data.get("decision")
+
+    comment = request.data.get("comment")
+
+    if not emp_id:
+        return None, None, None, Response(
+            {"error": "emp_id is required."},
+            status=400,
+        )
+
+    if decision not in VALID_DECISIONS:
+        return None, None, None, Response(
+            {"error": "Invalid review decision."},
+            status=400,
+        )
+
+    if not isinstance(comment, str) or not comment.strip():
+        return None, None, None, Response(
+            {"error": "Review comment is required."},
+            status=400,
+        )
+
+    return (
+        emp_id,
+        decision,
+        comment.strip(),
+        None,
+    )
+
+
+def apply_review_decision(referral, decision, comment):
+    """
+    Synchronize the referral's status with the latest
+    effective SBU review decision.
+
+    Review timestamps are stored in Review.reviewed_at,
+    not in the Referral model.
+    """
+
+    if decision == "REJECTED":
+
+        referral.current_status = "REJECTED"
+
+        referral.rejection_stage = "SBU"
+
+        referral.rejection_reason = comment
+
+    elif decision == "CONSIDERED":
+
+        referral.current_status = "CONSIDERED"
+
+        # Clear any previous SBU rejection details.
+        referral.rejection_stage = None
+
+        referral.rejection_reason = None
+
+    # Save only fields that actually exist in Referral.
+    referral.save(
+        update_fields=[
+            "current_status",
+            "rejection_stage",
+            "rejection_reason",
+        ]
+    )
+
+def notify_review_change(referral, previous_decision, decision):
+    """
+    Preserve existing notification purposes.
+
+    Testing emails remain hardcoded, matching the
+    current application configuration.
+
+    Notification errors are logged rather than causing
+    a committed review to appear unsuccessful.
+    """
+
+    try:
+
+        if decision == "REJECTED":
+
+            send_dynamic_email(
+                purpose="CV_REJECTED_SBU",
+                to_emails=["abgang05@gmail.com"],
+                context_data={
+                    "candidate_name": referral.candidate_name,
+                    "portal_link": (
+                        f"{settings.FRONTEND_BASE_URL}/"
+                    ),
+                    "reason": referral.rejection_reason,
                 },
-                "review": review_data,
-                "hr_evaluation": {
-                    "stage": hr_eval.stage,
-                    "status": hr_eval.status,
-                    "comment": hr_eval.comment,
-                    "updated_at": hr_eval.updated_at,
-                    "updated_by": hr_eval.updated_by.name
-                } if hr_eval else None,
-                "considered_at": review.reviewed_at if review else None,
-                "final_at": hr_eval.updated_at if hr_eval else None,
-            })
+            )
 
-        return Response(data)
+            if previous_decision == "CONSIDERED":
+
+                send_dynamic_email(
+                    purpose="CV_REVOKED_BY_SBU",
+                    to_emails=["abgang05@gmail.com"],
+                    context_data={
+                        "candidate_name": referral.candidate_name,
+                        "portal_link": (
+                            f"{settings.FRONTEND_BASE_URL}/hr-evaluation"
+                        ),
+                    },
+                )
+
+        elif decision == "CONSIDERED":
+
+            send_dynamic_email(
+                purpose="CV_APPROVED_SBU",
+                to_emails=["abgang05@gmail.com"],
+                context_data={
+                    "candidate_name": referral.candidate_name,
+                    "portal_link": (
+                        f"{settings.FRONTEND_BASE_URL}/"
+                    ),
+                },
+            )
+
+            # Notify HR when the referral first becomes
+            # considered or changes from rejected to considered.
+            if previous_decision != "CONSIDERED":
+
+                send_dynamic_email(
+                    purpose="CV_TO_HR",
+                    to_emails=["abgang05@gmail.com"],
+                    context_data={
+                        "candidate_name": referral.candidate_name,
+                        "portal_link": (
+                            f"{settings.FRONTEND_BASE_URL}/hr-evaluation"
+                        ),
+                    },
+                )
+
+    except Exception as error:
+
+        print(
+            "Review notification failed:",
+            str(error),
+        )
 
 
+def create_review_revision(request, referral_id, require_existing):
+    """
+    Shared implementation for initial reviews and revisions.
 
-class SubmitReviewView(APIView):
-    permission_classes = [AllowAny]
+    POST:
+        Creates the first review.
 
-    def post(self, request, referral_id):
-        decision = request.data.get("decision")
-        comment = request.data.get("comment")
-        emp_id = request.data.get("emp_id")
+    PUT:
+        Creates a new revision of an existing review.
 
-        if not all([decision, comment, emp_id]):
-            return Response({"error": "decision, comment, and emp_id are required"}, status=400)
+    Existing reviews are never overwritten.
+
+    expected_review_id:
+        Prevents stale clients from silently changing
+        a review that another reviewer has already revised.
+    """
+
+    emp_id, decision, comment, error = validate_review_payload(
+        request
+    )
+
+    if error:
+        return error
+
+    # ======================================================
+    # Validate expected review ID
+    # ======================================================
+
+    if "expected_review_id" not in request.data:
+
+        return Response(
+            {
+                "error": (
+                    "expected_review_id is required. "
+                    "Refresh the referral and try again."
+                )
+            },
+            status=400,
+        )
+
+    expected_review_id = request.data.get(
+        "expected_review_id"
+    )
+
+    if expected_review_id is not None:
 
         try:
-            referral = Referral.objects.get(id=referral_id)
+            expected_review_id = int(expected_review_id)
+
+        except (TypeError, ValueError):
+
+            return Response(
+                {"error": "Invalid expected_review_id."},
+                status=400,
+            )
+
+    # ======================================================
+    # Fetch reviewer
+    # ======================================================
+
+    try:
+
+        reviewer = User.objects.get(emp_id=emp_id)
+
+    except User.DoesNotExist:
+
+        return Response(
+            {"error": "Reviewer not found."},
+            status=404,
+        )
+
+    # ======================================================
+    # Atomic review submission
+    # ======================================================
+
+    with transaction.atomic():
+
+        try:
+
+            # Lock the referral row while checking and
+            # changing its effective SBU decision.
+            referral = (
+                Referral.objects
+                .select_for_update()
+                .select_related("referrer")
+                .get(id=referral_id)
+            )
+
         except Referral.DoesNotExist:
-            return Response({"error": "Referral not found."}, status=404)
 
-        try:
-            reviewer = User.objects.get(emp_id=emp_id)
-        except User.DoesNotExist:
-            return Response({"error": "Reviewer not found."}, status=404)
+            return Response(
+                {"error": "Referral not found."},
+                status=404,
+            )
 
-        Review.objects.create(
+        # --------------------------------------------------
+        # Verify reviewer assignment
+        # --------------------------------------------------
+
+        if not is_assigned_reviewer(referral, reviewer):
+
+            return Response(
+                {
+                    "error": (
+                        "You are not assigned as an "
+                        "SBU reviewer for this referral."
+                    )
+                },
+                status=403,
+            )
+
+        # --------------------------------------------------
+        # Lock review once HR has started
+        # --------------------------------------------------
+
+        if has_hr_started(referral):
+
+            return Response(
+                {
+                    "error": (
+                        "HR evaluation has already started. "
+                        "SBU reviews can no longer be modified."
+                    )
+                },
+                status=403,
+            )
+
+        # --------------------------------------------------
+        # Prevent modifications after HR finalization
+        # --------------------------------------------------
+
+        if referral.current_status in [
+            "FINAL_ACCEPTED",
+            "FINAL_REJECTED",
+        ]:
+
+            return Response(
+                {
+                    "error": (
+                        "This referral has already been "
+                        "finalized by HR."
+                    )
+                },
+                status=403,
+            )
+
+        # --------------------------------------------------
+        # Fetch the current effective review
+        # --------------------------------------------------
+
+        latest_review = get_latest_review(referral)
+
+        current_review_id = (
+            latest_review.id
+            if latest_review
+            else None
+        )
+
+        # --------------------------------------------------
+        # Validate initial submission vs revision
+        # --------------------------------------------------
+
+        if require_existing and latest_review is None:
+
+            return Response(
+                {
+                    "error": (
+                        "No existing review was found. "
+                        "Submit an initial review instead."
+                    )
+                },
+                status=409,
+            )
+
+        if not require_existing and latest_review is not None:
+
+            return Response(
+                {
+                    "error": (
+                        "A review already exists. "
+                        "Refresh and use Revise SBU Review."
+                    )
+                },
+                status=409,
+            )
+
+        # --------------------------------------------------
+        # Optimistic concurrency check
+        # --------------------------------------------------
+
+        if expected_review_id != current_review_id:
+
+            return Response(
+                {
+                    "error": (
+                        "Another reviewer has updated this "
+                        "referral. Refresh to see the latest "
+                        "decision before submitting."
+                    ),
+                    "latest_review": serialize_review(
+                        latest_review
+                    ),
+                },
+                status=409,
+            )
+
+        previous_decision = (
+            latest_review.decision
+            if latest_review
+            else None
+        )
+
+        # --------------------------------------------------
+        # Create a NEW review record
+        # --------------------------------------------------
+
+        new_review = Review.objects.create(
             referral=referral,
             reviewer=reviewer,
             decision=decision,
             comment=comment,
         )
 
-        if decision == "REJECTED":
-            referral.current_status = "REJECTED"
-            referral.rejection_stage = "SBU"
-            referral.rejection_reason = comment
+        # --------------------------------------------------
+        # Update the effective referral status
+        # --------------------------------------------------
 
-            recipientReferrer = referral.referrer.personal_email
-            print("Recipient Referrer: ",recipientReferrer)
+        apply_review_decision(
+            referral,
+            decision,
+            comment,
+        )
 
-            # ✅ Email to Referrer
-            send_dynamic_email(
-                purpose="CV_REJECTED_SBU",
-                to_emails=['abgang05@gmail.com'],
-                context_data={
-                    "candidate_name": referral.candidate_name,
-                    "portal_link": f"{settings.PORTAL_BASE_URL}/",
-                    "reason": comment
-                }
+        # --------------------------------------------------
+        # Notify after successful transaction commit
+        # --------------------------------------------------
+
+        transaction.on_commit(
+            lambda: notify_review_change(
+                referral,
+                previous_decision,
+                decision,
+            )
+        )
+
+    return Response(
+        {
+            "message": (
+                "Review revised successfully."
+                if require_existing
+                else "Review submitted successfully."
+            ),
+            "review": serialize_review(new_review),
+        },
+        status=201 if not require_existing else 200,
+    )
+
+
+# ==========================================================
+# GET: CVs assigned to the logged-in SBU reviewer
+# ==========================================================
+
+class CVsForReview(APIView):
+
+    permission_classes = [AllowAny]
+
+    def get(self, request):
+
+        emp_id = request.query_params.get("emp_id")
+
+        if not emp_id:
+
+            return Response(
+                {"error": "emp_id is required."},
+                status=400,
             )
 
-        elif decision == "CONSIDERED":
-            referral.current_status = "CONSIDERED"
+        try:
 
-            recipientReferrer = referral.referrer.personal_email
-            print("Recipient Referrer: ",recipientReferrer)
+            user = User.objects.get(emp_id=emp_id)
 
-            # ✅ Email to Referrer
-            send_dynamic_email(
-                purpose="CV_APPROVED_SBU",
-                to_emails=['abgang05@gmail.com'],
-                context_data={
-                    "candidate_name": referral.candidate_name,
-                    "portal_link": f"{settings.FRONTEND_BASE_URL}/"
-                }
+        except User.DoesNotExist:
+
+            return Response(
+                {"error": "User not found."},
+                status=404,
             )
 
-            # ✅ Notify HR
-            hr_emails = list(User.objects.filter(is_hr=True).values_list('personal_email', flat=True))
-            print("HR Personal Emails: ",hr_emails)
-            send_dynamic_email(
-                purpose="CV_TO_HR",
-                to_emails=['abgang05@gmail.com'],
-                context_data={
-                    "candidate_name": referral.candidate_name,
-                    "portal_link": f"{settings.FRONTEND_BASE_URL}/hr-evaluation"
-                }
+        # --------------------------------------------------
+        # Fetch referrals assigned to this employee
+        # --------------------------------------------------
+
+        referrals = (
+            Referral.objects
+            .filter(sbus__email__iexact=user.email.strip())
+            .distinct()
+            .select_related("referrer")
+            .prefetch_related(
+                "sbus",
+                Prefetch(
+                    "review_set",
+                    queryset=(
+                        Review.objects
+                        .select_related("reviewer")
+                        .order_by("id")
+                    ),
+                ),
+            )
+            .order_by("-submitted_at")
+        )
+
+        data = []
+
+        for referral in referrals:
+
+            # ------------------------------------------------
+            # Fetch ALL reviews, not only this user's reviews
+            # ------------------------------------------------
+
+            reviews = list(referral.review_set.all())
+
+            latest_review = (
+                reviews[-1]
+                if reviews
+                else None
             )
 
-        else:
-            return Response({"error": "Invalid decision"}, status=400)
+            # ------------------------------------------------
+            # HR evaluation information
+            # ------------------------------------------------
 
-        referral.considered_at = timezone.now()
-        referral.save()
+            hr_eval = (
+                HREvaluation.objects
+                .filter(referral=referral)
+                .select_related("updated_by")
+                .order_by("-updated_at", "-id")
+                .first()
+            )
 
-        return Response({"message": "Review submitted."})
+            hr_started = hr_eval is not None
 
+            is_finalized = referral.current_status in [
+                "FINAL_ACCEPTED",
+                "FINAL_REJECTED",
+            ]
+
+            can_edit_sbu_review = (
+                not hr_started
+                and not is_finalized
+            )
+
+            # ------------------------------------------------
+            # Serialize review history
+            # ------------------------------------------------
+
+            review_history = [
+                serialize_review(review)
+                for review in reversed(reviews)
+            ]
+
+            # ------------------------------------------------
+            # Build referral response
+            # ------------------------------------------------
+
+            data.append({
+
+                "id": referral.id,
+
+                "candidate_name": referral.candidate_name,
+
+                "candidate_type": referral.candidate_type,
+
+                "candidate_email": referral.candidate_email,
+
+                "candidate_phone": referral.candidate_phone,
+
+                "submitted_at": referral.submitted_at,
+
+                "referral_reason_type": (
+                    referral.referral_reason_type
+                ),
+
+                "current_status": referral.current_status,
+
+                "rejection_stage": referral.rejection_stage,
+
+                "rejection_reason": referral.rejection_reason,
+
+                "cv_url": referral.cv_url,
+
+                "sbus": [
+                    {
+                        "name": sbu.name,
+                        "email": sbu.email,
+                    }
+                    for sbu in referral.sbus.all()
+                ],
+
+                "additional_comment": (
+                    referral.additional_comment
+                ),
+
+                "referrer": {
+                    "emp_id": referral.referrer.emp_id,
+                    "name": referral.referrer.name,
+                    "email": referral.referrer.email,
+                },
+
+                # Latest effective SBU review
+                "review": serialize_review(latest_review),
+
+                # Complete SBU review history
+                "review_history": review_history,
+
+                # Explicit permission flag for frontend
+                "can_edit_sbu_review": can_edit_sbu_review,
+
+                "hr_evaluation_started": hr_started,
+
+                "hr_evaluation": {
+                    "stage": hr_eval.stage,
+                    "status": hr_eval.status,
+                    "comment": hr_eval.comment,
+                    "updated_at": hr_eval.updated_at,
+                    "updated_by": hr_eval.updated_by.name,
+                } if hr_eval else None,
+
+            # Timestamp of the latest effective SBU review.
+
+            "considered_at": (
+
+                latest_review.reviewed_at
+
+                if latest_review
+
+                else None
+
+            ),
+
+            # Timestamp of the latest HR evaluation update.
+
+            "final_at": (
+
+                hr_eval.updated_at
+
+                if hr_eval
+
+                else None
+
+            ),
+                        })
+
+        return Response(data, status=200)
+
+
+# ==========================================================
+# POST: Submit the first SBU review
+# ==========================================================
+
+class SubmitReviewView(APIView):
+
+    permission_classes = [AllowAny]
+
+    def post(self, request, referral_id):
+
+        return create_review_revision(
+            request=request,
+            referral_id=referral_id,
+            require_existing=False,
+        )
+
+
+# ==========================================================
+# PUT: Revise the effective SBU decision
+# ==========================================================
 
 class UpdateReviewView(APIView):
+
     permission_classes = [AllowAny]
 
     def put(self, request, referral_id):
-        emp_id = request.data.get("emp_id")
-        decision = request.data.get("decision")
-        comment = request.data.get("comment")
 
-        if not emp_id or not decision:
-            return Response({"error": "Missing required fields"}, status=400)
-
-        try:
-            reviewer = User.objects.get(emp_id=emp_id)
-        except User.DoesNotExist:
-            return Response({"error": "Reviewer not found"}, status=404)
-
-        try:
-            review = Review.objects.filter(
-                referral__id=referral_id, reviewer=reviewer
-            ).order_by('-reviewed_at').first()
-
-            if not review:
-                return Response({"error": "Review not found"}, status=404)
-
-            previous_decision = review.decision
-            referral = review.referral
-
-            # Update review
-            review.decision = decision
-            review.comment = comment
-            review.save()
-
-            if decision == "REJECTED":
-                referral.current_status = "REJECTED"
-                referral.rejection_stage = "SBU"
-                referral.rejection_reason = comment
-
-                referrerMail = referral.referrer.personal_email
-                print("Referrer Mail: ",referrerMail)
-
-                # Notify Referrer
-                send_dynamic_email(
-                    purpose="CV_REJECTED_SBU",
-                    to_emails=['abgang05@gmail.com'],
-                    context_data={
-                        "candidate_name": referral.candidate_name,
-                        "portal_link": f"{settings.FRONTEND_BASE_URL}/",
-                        "reason": comment
-                    }
-                )
-
-                # ✅ Notify HRs if it was previously accepted
-                if previous_decision == "CONSIDERED":
-                    hr_emails = list(User.objects.filter(is_hr=True).values_list('personal_email', flat=True))
-                    print("HR Personal Emails: ",hr_emails)
-                    send_dynamic_email(
-                        purpose="CV_REVOKED_BY_SBU",
-                        to_emails=['abgang05@gmail.com'],
-                        context_data={
-                            "candidate_name": referral.candidate_name,
-                            "portal_link": f"{settings.FRONTEND_BASE_URL}/hr-evaluation",
-                        }
-                    )
-
-            elif decision == "CONSIDERED":
-                referral.current_status = "CONSIDERED"
-                referral.rejection_stage = None
-                referral.rejection_reason = None
-
-                referrerMail = referral.referrer.personal_email
-                print("Referrer Mail: ",referrerMail)
-
-                # Notify Referrer
-                send_dynamic_email(
-                    purpose="CV_APPROVED_SBU",
-                    to_emails=['abgang05@gmail.com'],
-                    context_data={
-                        "candidate_name": referral.candidate_name,
-                        "portal_link": f"{settings.FRONTEND_BASE_URL}/"
-                    }
-                )
-
-                # Notify HR only if previously rejected
-                if previous_decision == "REJECTED":
-                    hr_emails = list(User.objects.filter(is_hr=True).values_list('personal_email', flat=True))
-                    print("HR Personal Emails: ",hr_emails)
-                    send_dynamic_email(
-                        purpose="CV_TO_HR",
-                        to_emails=['abgang05@gmail.com'],
-                        context_data={
-                            "candidate_name": referral.candidate_name,
-                            "portal_link": f"{settings.FRONTEND_BASE_URL}/hr-evaluation"
-                        }
-                    )
-
-            referral.save()
-            return Response({"message": "Review and referral updated successfully."})
-
-        except Exception as e:
-            return Response({"error": str(e)}, status=500)
+        return create_review_revision(
+            request=request,
+            referral_id=referral_id,
+            require_existing=True,
+        )

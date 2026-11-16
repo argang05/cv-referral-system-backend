@@ -105,6 +105,40 @@ class Referral(models.Model):
 
     candidate_name = models.CharField(max_length=100)
 
+    # ==========================================================
+
+    # Candidate Contact Details (Optional)
+
+    # ==========================================================
+
+    # Optional candidate email address
+
+    candidate_email = models.EmailField(
+
+        max_length=254,
+
+        null=True,
+
+        blank=True
+
+    )
+
+    # Optional candidate phone number
+
+    # CharField is preferred over IntegerField because phone
+
+    # numbers may contain country codes, '+' and leading zeros.
+
+    candidate_phone = models.CharField(
+
+        max_length=20,
+
+        null=True,
+
+        blank=True
+
+    )
+
     # Increased from 20 to 30
     candidate_type = models.CharField(
         max_length=30,

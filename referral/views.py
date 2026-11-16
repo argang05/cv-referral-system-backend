@@ -10,62 +10,178 @@ from api.models import Review, HREvaluation
 from api.utils import send_dynamic_email
 from django.conf import settings
 from .serializers import ReferralSerializer
+from django.core.validators import validate_email
+from django.core.exceptions import ValidationError
 
 
 class SubmitReferralView(APIView):
-    parser_classes = [JSONParser]  # Accept JSON
+
+    parser_classes = [JSONParser]
 
     def post(self, request):
-        print("Referral Data: ", request.data)
+
+        print("Referral Data:", request.data)
+
+        # ==================================================
+        # Existing required fields
+        # ==================================================
+
         emp_id = request.data.get("emp_id")
+
         candidate_name = request.data.get("candidate_name")
+
         candidate_type = request.data.get("candidate_type")
-        referral_reason_type = request.data.get("referral_reason_type")  # ✅ New field
+
+        referral_reason_type = request.data.get(
+            "referral_reason_type"
+        )
+
         sbu_emails = request.data.get("sbu_emails", [])
+
         cv_url = request.data.get("cv_url")
-        additional_comment = request.data.get("additional_comment", "")
 
-        print("SBU Emails: ", sbu_emails)
+        additional_comment = request.data.get(
+            "additional_comment", ""
+        )
 
-        if not (emp_id and candidate_name and candidate_type and sbu_emails and cv_url and referral_reason_type):
-            return Response({"error": "Missing required fields."}, status=400)
+        # ==================================================
+        # NEW: Optional candidate contact details
+        # ==================================================
+
+        candidate_email = (
+            request.data.get("candidate_email") or ""
+        ).strip()
+
+        candidate_phone = (
+            request.data.get("candidate_phone") or ""
+        ).strip()
+
+        # ==================================================
+        # Existing required-field validation
+        # ==================================================
+
+        if not (
+            emp_id
+            and candidate_name
+            and candidate_type
+            and sbu_emails
+            and cv_url
+            and referral_reason_type
+        ):
+            return Response(
+                {"error": "Missing required fields."},
+                status=400
+            )
+
+        # ==================================================
+        # Validate optional email when provided
+        # ==================================================
+
+        if candidate_email:
+
+            from django.core.validators import validate_email
+            from django.core.exceptions import ValidationError
+
+            try:
+                validate_email(candidate_email)
+
+            except ValidationError:
+                return Response(
+                    {"error": "Invalid candidate email address."},
+                    status=400
+                )
+
+        # ==================================================
+        # Validate optional phone length
+        # ==================================================
+
+        if len(candidate_phone) > 20:
+            return Response(
+                {"error": "Candidate phone number is too long."},
+                status=400
+            )
+
+        # ==================================================
+        # Fetch employee
+        # ==================================================
 
         try:
             user = User.objects.get(emp_id=emp_id)
+
         except User.DoesNotExist:
-            return Response({"error": "User not found."}, status=404)
+            return Response(
+                {"error": "User not found."},
+                status=404
+            )
+
+        # ==================================================
+        # Create referral
+        # ==================================================
 
         referral = Referral.objects.create(
+
             referrer=user,
+
             candidate_name=candidate_name,
+
+            # NEW: Optional contact details
+            candidate_email=candidate_email or None,
+            candidate_phone=candidate_phone or None,
+
             candidate_type=candidate_type,
-            referral_reason_type=referral_reason_type,   # ✅ Save new field
+
+            referral_reason_type=referral_reason_type,
+
             cv_url=cv_url,
-            submitted_at=now(),
+
             current_status="PENDING_REVIEW",
+
             additional_comment=additional_comment
         )
 
-        matched_sbus = SBU.objects.filter(email__in=sbu_emails)
+        # ==================================================
+        # Existing SBU assignment
+        # ==================================================
+
+        matched_sbus = SBU.objects.filter(
+            email__in=sbu_emails
+        )
+
         print("Matched SBUs:", matched_sbus.count())
+
         referral.sbus.set(matched_sbus)
 
-        recipients = [sbu.personal_email for sbu in referral.sbus.all()]
-        print("Recipients: ", recipients)
+        # ==================================================
+        # Existing email notification
+        # ==================================================
 
-        portal_link = f"{settings.FRONTEND_BASE_URL}/review-cv"
+        recipients = [
+            sbu.personal_email
+            for sbu in referral.sbus.all()
+        ]
+
+        print("Recipients:", recipients)
+
+        portal_link = (
+            f"{settings.FRONTEND_BASE_URL}/review-cv"
+        )
 
         send_dynamic_email(
-            purpose='CV_TO_SBU',
-            to_emails=['abgang05@gmail.com'],  # 🔄 replace with recipients later
+
+            purpose="CV_TO_SBU",
+
+            to_emails=["abgang05@gmail.com"],
+
             context_data={
-                'candidate_name': referral.candidate_name,
-                'portal_link': portal_link
+                "candidate_name": referral.candidate_name,
+                "portal_link": portal_link
             }
         )
 
-        return Response({"message": "Referral submitted successfully."}, status=201)
-
+        return Response(
+            {"message": "Referral submitted successfully."},
+            status=201
+        )
 
 # referral/views.py
 class MyReferralsView(APIView):
@@ -92,6 +208,8 @@ class MyReferralsView(APIView):
                 "id": r.id,
                 "candidate_name": r.candidate_name,
                 "candidate_type": r.candidate_type,
+                "candidate_email": r.candidate_email,
+                "candidate_phone": r.candidate_phone,
                 "referral_reason_type": r.referral_reason_type,  # ✅ Added
                 "submitted_at": r.submitted_at,
                 "current_status": r.current_status,
@@ -141,6 +259,61 @@ class UpdateReferralView(APIView):
 
         # Update fields
         referral.candidate_name = request.data.get('candidate_name', referral.candidate_name)
+        # Update email only if the field is present in request
+
+        if "candidate_email" in request.data:
+
+            candidate_email = (
+
+                request.data.get("candidate_email") or ""
+
+            ).strip()
+
+            # Validate only if an email was provided
+
+            if candidate_email:
+
+                try:
+
+                    validate_email(candidate_email)
+
+                except ValidationError:
+
+                    return Response(
+
+                        {"error": "Invalid candidate email address."},
+
+                        status=400
+
+                    )
+
+            # Empty string clears the existing email
+
+            referral.candidate_email = candidate_email or None
+
+        # Update phone only if the field is present in request
+
+        if "candidate_phone" in request.data:
+
+            candidate_phone = (
+
+                request.data.get("candidate_phone") or ""
+
+            ).strip()
+
+            if len(candidate_phone) > 20:
+
+                return Response(
+
+                    {"error": "Candidate phone number is too long."},
+
+                    status=400
+
+                )
+
+            # Empty string clears the existing phone number
+
+        referral.candidate_phone = candidate_phone or None
         referral.candidate_type = request.data.get('candidate_type', referral.candidate_type)
         referral.referral_reason_type = request.data.get('referral_reason_type', referral.referral_reason_type)  # ✅ NEW
         referral.additional_comment = request.data.get('additional_comment', referral.additional_comment)

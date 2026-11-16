@@ -19,6 +19,9 @@ class ReferralSerializer(serializers.ModelSerializer):
         fields = [
             'id',
             'candidate_name',
+            # NEW: Optional candidate contact details
+            'candidate_email',
+            'candidate_phone',
             'candidate_type',
             'submitted_at',
             'considered_at',
