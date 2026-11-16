@@ -170,7 +170,7 @@ class SubmitReferralView(APIView):
 
             purpose="CV_TO_SBU",
 
-            to_emails=["abgang05@gmail.com"],
+            to_emails=["argang05@gmail.com"],
 
             context_data={
                 "candidate_name": referral.candidate_name,
