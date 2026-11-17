@@ -2,6 +2,9 @@ from django.db import models
 from django.contrib.postgres.fields import ArrayField
 import uuid
 from django.contrib.postgres.fields import JSONField
+from django.core.validators import MinValueValidator, MaxValueValidator
+
+from decimal import Decimal
 
 # Create your models here.
 
@@ -42,6 +45,14 @@ class User(models.Model):
     on_delete=models.SET_NULL,
     related_name='subordinates'
     )
+
+    @property
+    def is_authenticated(self):
+        return True
+
+    @property
+    def is_anonymous(self):
+        return False
 
     def __str__(self):
         return f"{self.emp_id} - {self.name}"
@@ -202,6 +213,114 @@ class Referral(models.Model):
         blank=True
     )
 
+    # Academic details (collected by HR for fresher candidates)
+
+    ACADEMIC_STATUS_CHOICES = [
+
+        ("PENDING", "Pending"),
+
+        ("DRAFT", "Draft"),
+
+        ("COMPLETED", "Completed"),
+
+        ("NOT_REQUIRED", "Not Required"),
+
+    ]
+
+    tenth_percentage = models.DecimalField(
+
+        max_digits=5,
+
+        decimal_places=2,
+
+        null=True,
+
+        blank=True,
+
+        validators=[
+
+            MinValueValidator(Decimal("0")),
+
+            MaxValueValidator(Decimal("100"))
+
+        ]
+
+    )
+
+    twelfth_percentage = models.DecimalField(
+
+        max_digits=5,
+
+        decimal_places=2,
+
+        null=True,
+
+        blank=True,
+
+        validators=[
+
+            MinValueValidator(Decimal("0")),
+
+            MaxValueValidator(Decimal("100"))
+
+        ]
+
+    )
+
+    graduation_cgpa = models.DecimalField(
+
+        max_digits=4,
+
+        decimal_places=2,
+
+        null=True,
+
+        blank=True,
+
+        validators=[
+
+            MinValueValidator(Decimal("0")),
+
+            MaxValueValidator(Decimal("10"))
+
+        ]
+
+    )
+
+    academic_details_status = models.CharField(
+
+        max_length=20,
+
+        choices=ACADEMIC_STATUS_CHOICES,
+
+        default="PENDING"
+
+    )
+
+    academic_details_updated_at = models.DateTimeField(
+
+        null=True,
+
+        blank=True
+
+    )
+
+    academic_details_updated_by = models.ForeignKey(
+
+        User,
+
+        to_field="emp_id",
+
+        on_delete=models.SET_NULL,
+
+        null=True,
+
+        blank=True,
+
+        related_name="academic_details_updated_referrals"
+
+    )
+
     @property
     def is_fresher(self):
         return self.candidate_type.endswith("_FRESHER")
@@ -233,37 +352,103 @@ class Review(models.Model):
 
 
 
-
-
 # -----------------------------
 # 5. HR Evaluation Table
 # -----------------------------
 class HREvaluation(models.Model):
     STAGE_CHOICES = [
-        ('TEST', 'Test'),
-        ('T1', 'Technical Round 1'),
-        ('T2', 'Technical Round 2'),
-        ('T3', 'Technical Round 3'),
-        ('HR', 'HR Round'),
-        ('OTHER', 'Other Reason'),
+        ("TEST", "Test"),
+        ("T1", "Technical Round 1"),
+        ("T2", "Technical Round 2"),
+        ("T3", "Technical Round 3"),
+        ("HR", "HR Round"),
+        ("OTHER", "Other Reason"),
     ]
-
     STATUS_CHOICES = [
-        ('IN_PROGRESS', 'In Progress'),
-        ('ACCEPTED', 'Accepted'),
-        ('REJECTED', 'Rejected'),
+        ("IN_PROGRESS", "In Progress"),
+        ("ACCEPTED", "Accepted"),
+        ("REJECTED", "Rejected"),
+    ]
+    EVALUATION_STATUS_CHOICES = [
+        ("DRAFT", "Draft"),
+        ("COMPLETED", "Completed"),
+    ]
+    OFFER_OUTCOME_CHOICES = [
+        ("OFFER_DECLINED", "Offer Declined"),
+        ("DID_NOT_JOIN", "Did Not Join"),
+        ("JOINED", "Joined"),
     ]
 
-    # referral = models.ForeignKey(Referral, on_delete=models.CASCADE)
     referral = models.ForeignKey(Referral, on_delete=models.CASCADE)
-    stage = models.CharField(max_length=20, choices=STAGE_CHOICES)
+    stage = models.CharField(max_length=20, choices=STAGE_CHOICES, blank=True, default="")
     status = models.CharField(max_length=20, choices=STATUS_CHOICES)
     comment = models.TextField()
     updated_by = models.ForeignKey(User, on_delete=models.CASCADE, related_name="hr_updates")
     updated_at = models.DateTimeField(auto_now=True)
+    evaluation_status = models.CharField(max_length=20, choices=EVALUATION_STATUS_CHOICES, default="DRAFT")
+    finalized_at = models.DateTimeField(null=True, blank=True)
+    finalized_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="finalized_hr_evaluations"
+    )
+
+    # Offer details
+    offer_released = models.BooleanField(default=False)
+    offer_outcome = models.CharField(
+        max_length=20, choices=OFFER_OUTCOME_CHOICES, null=True, blank=True
+    )
+    joining_date = models.DateField(null=True, blank=True)
+
+    @property
+    def is_locked(self):
+        return self.evaluation_status == "COMPLETED"
 
     def __str__(self):
-        return f"{self.referral.candidate_name} - {self.stage} ({self.status})"
+        return f"{self.referral.candidate_name} - {self.status} ({self.evaluation_status})"
+
+
+# -----------------------------
+# 6. HR Evaluation History
+# -----------------------------
+class HREvaluationHistory(models.Model):
+    ACTION_CHOICES = [
+        ("SAVE_DRAFT", "Save Draft"),
+        ("FINALIZE", "Finalize & Lock"),
+    ]
+
+    evaluation = models.ForeignKey(
+        HREvaluation, on_delete=models.CASCADE, related_name="history"
+    )
+    revision = models.PositiveIntegerField()
+    stage = models.CharField(max_length=20, choices=HREvaluation.STAGE_CHOICES, blank=True, default="")
+    status = models.CharField(max_length=20, choices=HREvaluation.STATUS_CHOICES)
+    comment = models.TextField()
+    action = models.CharField(max_length=20, choices=ACTION_CHOICES)
+    updated_by = models.ForeignKey(
+        User, on_delete=models.SET_NULL, null=True, blank=True,
+        related_name="hr_evaluation_revisions"
+    )
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    # Offer details snapshot for each revision
+    offer_released = models.BooleanField(default=False)
+    offer_outcome = models.CharField(
+        max_length=20, choices=HREvaluation.OFFER_OUTCOME_CHOICES,
+        null=True, blank=True
+    )
+    joining_date = models.DateField(null=True, blank=True)
+
+    class Meta:
+        ordering = ["-revision"]
+        constraints = [
+            models.UniqueConstraint(
+                fields=["evaluation", "revision"],
+                name="unique_hr_evaluation_revision"
+            )
+        ]
+
+    def __str__(self):
+        return f"HR Evaluation #{self.evaluation_id} - Revision {self.revision}"
 
 
 # -----------------------------

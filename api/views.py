@@ -21,6 +21,11 @@ from django.utils import timezone
 # from api.models import Department
 from rest_framework.parsers import MultiPartParser, FormParser
 import re
+from rest_framework_simplejwt.authentication import JWTAuthentication
+
+from rest_framework.exceptions import AuthenticationFailed
+
+from api.models import User
 
 # Mapping logic from SBU-email table (can move this to DB later)
 REVIEWER_SBU_MAPPING = {
@@ -214,17 +219,18 @@ class BulkUserRegisterView(APIView):
 
 
 class LoginView(APIView):
-    def set_jwt_cookie(self, response, token):
-        max_age = 60 * 60 * 24 * 7  # 7 days
-        secure_cookie = not os.environ.get("DEBUG", "true").lower() in ["1", "true"]
 
+    def set_jwt_cookie(self, response, token):
+        max_age = 60 * 60 * 24 * 7
+        is_local = os.environ.get("DEBUG", "true").lower() in ["1", "true"]
         response.set_cookie(
-            key='access_token',
+            key="access_token",
             value=token,
             httponly=True,
-            secure=secure_cookie,    # 🔐 Set to False only for local dev
-            samesite='None',         # 🔄 Required for cross-origin cookies
+            secure=not is_local,
+            samesite="Lax" if is_local else "None",
             max_age=max_age,
+            path="/"
         )
         return response
 
@@ -273,19 +279,38 @@ class LogoutView(APIView):
         return response
 
 class CookieJWTAuthentication(JWTAuthentication):
-    def get_raw_token(self, header):
-        # First try normal Authorization header
-        raw_token = super().get_raw_token(header)
-        if raw_token:
-            return raw_token
 
-        # Fallback to cookie named "access_token"
-        request = self.request
-        cookie_token = request.COOKIES.get("access_token")
-        if cookie_token:
-            return cookie_token
+    def authenticate(self, request):
 
-        return None
+        header = self.get_header(request)
+
+        raw_token = self.get_raw_token(header) if header else None
+
+        if raw_token is None:
+
+            raw_token = request.COOKIES.get("access_token")
+
+        if not raw_token:
+
+            return None
+
+        validated_token = self.get_validated_token(raw_token)
+
+        user_id = validated_token.get("user_id")
+
+        if not user_id:
+
+            raise AuthenticationFailed("Invalid authentication token.")
+
+        try:
+
+            user = User.objects.get(pk=user_id, is_active=True)
+
+        except (User.DoesNotExist, ValueError, TypeError):
+
+            raise AuthenticationFailed("User not found or inactive.")
+
+        return user, validated_token
 
 class MeView(APIView):
     authentication_classes = [CookieJWTAuthentication]

@@ -66,3 +66,63 @@ class ReferralSerializer(serializers.ModelSerializer):
                 "updated_at": hr.updated_at,
             }
         return None
+
+class AcademicDetailsSerializer(serializers.ModelSerializer):
+
+    tenth_percentage = serializers.DecimalField(
+
+        max_digits=5, decimal_places=2, min_value=0, max_value=100,
+
+        required=False, allow_null=True
+
+    )
+
+    twelfth_percentage = serializers.DecimalField(
+
+        max_digits=5, decimal_places=2, min_value=0, max_value=100,
+
+        required=False, allow_null=True
+
+    )
+
+    graduation_cgpa = serializers.DecimalField(
+
+        max_digits=4, decimal_places=2, min_value=0, max_value=10,
+
+        required=False, allow_null=True
+
+    )
+
+    class Meta:
+
+        model = Referral
+
+        fields = ["tenth_percentage", "twelfth_percentage", "graduation_cgpa"]
+
+    def validate(self, attrs):
+
+        if not self.instance or not self.instance.is_fresher:
+
+            raise serializers.ValidationError("Academic details are only applicable to fresher candidates.")
+
+        action = self.context.get("action")
+
+        if action == "FINALIZE":
+
+            fields = ["tenth_percentage", "twelfth_percentage", "graduation_cgpa"]
+
+            errors = {}
+
+            for field in fields:
+
+                value = attrs.get(field, getattr(self.instance, field))
+
+                if value is None:
+
+                    errors[field] = "This field is required before finalization."
+
+            if errors:
+
+                raise serializers.ValidationError(errors)
+
+        return attrs
