@@ -4,13 +4,18 @@ from rest_framework import status
 from rest_framework.permissions import IsAuthenticated
 from api.models import (
     Department, SBU, EmailTemplate, User, Referral,
-    Review, HREvaluation, HREvaluationHistory
+    Review, HREvaluation, HREvaluationHistory, JobVacancy, JobPostingHistory
 )
 from api.serializers import DepartmentSerializer, SBUSerializer, EmailTemplateSerializer
 from django.db import transaction, connection
 from django.db.models import Prefetch, Q
 from django.core.exceptions import PermissionDenied
 from django.db.models.deletion import ProtectedError, RestrictedError
+from django.db.models import Prefetch, Q, Count
+from django.core.paginator import Paginator, EmptyPage
+from django.utils.dateparse import parse_date
+from datetime import datetime, time, timedelta
+from django.utils import timezone
 import json
 from rest_framework.permissions import BasePermission
 
@@ -554,4 +559,223 @@ class CompletedReferralDetailView(APIView):
         except (ProtectedError, RestrictedError):
             return Response({
                 "error": "Referral cannot be deleted because protected related records exist."
+            }, status=409)
+
+# ==========================================================
+# ADMIN JOB POSTING AUDIT TRAIL - SERIALIZATION HELPERS
+# ==========================================================
+
+def serialize_audit_employee(employee):
+    if employee is None:
+        return None
+    return {"emp_id": employee.emp_id, "name": employee.name, "email": employee.email, "role": employee.role}
+
+def serialize_job_audit_event(event):
+    return {
+        "id": event.id,
+        "action": event.action,
+        "action_display": event.get_action_display(),
+        "previous_status": event.previous_status,
+        "new_status": event.new_status,
+        "changes": event.changes or {},
+        "performed_by": serialize_audit_employee(event.performed_by),
+        "created_at": event.created_at
+    }
+
+def serialize_job_audit_summary(job):
+    return {
+        "job_id": str(job.job_id),
+        "job_title": job.job_title,
+        "status": job.status,
+        "status_display": job.get_status_display(),
+        "department": {"id": str(job.department.id), "name": job.department.name} if job.department else None,
+        "department_name": job.department.name if job.department else None,
+        "employment_type": job.employment_type,
+        "mode": job.mode,
+        "location": job.location,
+        "closing_date": job.closing_date,
+        "posted_by": serialize_audit_employee(job.posted_by),
+        "created_at": job.created_at,
+        "updated_at": job.updated_at,
+        "published_at": job.published_at,
+        "closed_at": job.closed_at,
+        "archived_at": job.archived_at,
+        "referral_count": job.referral_count,
+        "history_count": job.history_count
+    }
+
+def serialize_job_audit_detail(job):
+    result = serialize_job_audit_summary(job)
+    result.update({
+        "job_description": job.job_description,
+        "work_experience": job.work_experience,
+        "job_desc_document_url": job.job_desc_document_url,
+        "education_summary": job.education_summary,
+        "key_skills": job.key_skills,
+        "min_experience": job.min_experience,
+        "max_experience": job.max_experience,
+        "functional_background": job.functional_background,
+        "preferred_industry": job.preferred_industry,
+        "behavioural_attributes": job.behavioural_attributes,
+        "history": [serialize_job_audit_event(event) for event in job.prefetched_audit_history]
+    })
+    return result
+
+def get_job_audit_queryset():
+    return JobVacancy.objects.select_related("department", "posted_by").annotate(
+        referral_count=Count("referrals", distinct=True),
+        history_count=Count("history", distinct=True)
+    )
+
+# ==========================================================
+# ADMIN JOB POSTING AUDIT TRAIL - LIST
+# ==========================================================
+
+class AdminJobPostingAuditListView(APIView):
+    authentication_classes = [CookieJWTAuthentication]
+    permission_classes = [AdminOnlyPermission]
+
+    def get(self, request):
+        queryset = get_job_audit_queryset()
+        search = (request.query_params.get("search") or "").strip()
+        job_status = (request.query_params.get("status") or "ALL").strip().upper()
+        department = (request.query_params.get("department") or "").strip()
+        action = (request.query_params.get("action") or "ALL").strip().upper()
+        start_date = (request.query_params.get("start_date") or "").strip()
+        end_date = (request.query_params.get("end_date") or "").strip()
+        page_value = request.query_params.get("page", "1")
+        page_size_value = request.query_params.get("page_size", "10")
+
+        valid_statuses = {"ALL", *dict(JobVacancy.STATUS_CHOICES)}
+        valid_actions = {"ALL", *dict(JobPostingHistory.ACTION_CHOICES)}
+        if job_status not in valid_statuses:
+            return Response({"error": "Invalid job posting status."}, status=400)
+        if action not in valid_actions:
+            return Response({"error": "Invalid audit action."}, status=400)
+        try:
+            page_number = int(page_value)
+            page_size = int(page_size_value)
+            if page_number < 1 or page_size < 1 or page_size > 100:
+                raise ValueError
+        except (TypeError, ValueError):
+            return Response({"error": "Page must be positive and page_size must be between 1 and 100."}, status=400)
+
+        parsed_start = parse_date(start_date) if start_date else None
+        parsed_end = parse_date(end_date) if end_date else None
+        if (start_date and not parsed_start) or (end_date and not parsed_end):
+            return Response({"error": "Invalid date format. Use YYYY-MM-DD."}, status=400)
+        if parsed_start and parsed_end and parsed_start > parsed_end:
+            return Response({"error": "Start date cannot be after end date."}, status=400)
+
+        summary = JobVacancy.objects.aggregate(
+            total=Count("id"),
+            draft=Count("id", filter=Q(status="DRAFT")),
+            open=Count("id", filter=Q(status="OPEN")),
+            closed=Count("id", filter=Q(status="CLOSED")),
+            archived=Count("id", filter=Q(status="ARCHIVED"))
+        )
+
+        if search:
+            queryset = queryset.filter(
+                Q(job_title__icontains=search) |
+                Q(job_description__icontains=search) |
+                Q(department__name__icontains=search) |
+                Q(posted_by__name__icontains=search) |
+                Q(posted_by__emp_id__icontains=search) |
+                Q(location__icontains=search)
+            )
+        if job_status != "ALL":
+            queryset = queryset.filter(status=job_status)
+        if department:
+            queryset = queryset.filter(department_id=department)
+        if action != "ALL":
+            queryset = queryset.filter(id__in=JobPostingHistory.objects.filter(action=action).values("job_id"))
+        if parsed_start:
+            queryset = queryset.filter(created_at__date__gte=parsed_start)
+        if parsed_end:
+            queryset = queryset.filter(created_at__date__lte=parsed_end)
+
+        queryset = queryset.order_by("-created_at", "-id")
+        paginator = Paginator(queryset, page_size)
+        try:
+            page = paginator.page(page_number)
+        except EmptyPage:
+            return Response({"error": "Requested page does not exist."}, status=404)
+
+        return Response({
+            "count": paginator.count,
+            "page": page.number,
+            "page_size": page_size,
+            "total_pages": paginator.num_pages,
+            "has_next": page.has_next(),
+            "has_previous": page.has_previous(),
+            "summary": summary,
+            "results": [serialize_job_audit_summary(job) for job in page.object_list]
+        }, status=200)
+
+# ==========================================================
+# ADMIN JOB POSTING AUDIT TRAIL - DETAIL
+# ==========================================================
+
+class AdminJobPostingAuditDetailView(APIView):
+    authentication_classes = [CookieJWTAuthentication]
+    permission_classes = [AdminOnlyPermission]
+
+    def get(self, request, job_id):
+        queryset = get_job_audit_queryset().prefetch_related(
+            Prefetch(
+                "history",
+                queryset=JobPostingHistory.objects.select_related("performed_by").order_by("-created_at", "-id"),
+                to_attr="prefetched_audit_history"
+            )
+        )
+        job = queryset.filter(job_id=job_id).first()
+        if job is None:
+            return Response({"error": "Job posting not found."}, status=404)
+        return Response(serialize_job_audit_detail(job), status=200)
+
+    def delete(self, request, job_id):
+        confirmation = request.data.get("confirmation")
+        job_title_confirmation = request.data.get("job_title")
+
+        if confirmation != "DELETE":
+            return Response({"error": "Deletion confirmation is required. Enter DELETE."}, status=400)
+        if not isinstance(job_title_confirmation, str) or not job_title_confirmation.strip():
+            return Response({"error": "Job title confirmation is required."}, status=400)
+
+        try:
+            with transaction.atomic():
+                job = JobVacancy.objects.select_for_update().filter(job_id=job_id).first()
+                if job is None:
+                    return Response({"error": "Job posting not found."}, status=404)
+
+                if job_title_confirmation.strip() != job.job_title.strip():
+                    return Response({"error": "Job title does not match. Deletion cancelled."}, status=400)
+
+                deleted_job_id = str(job.job_id)
+                deleted_job_title = job.job_title
+
+                referral_count = Referral.objects.filter(job_posting=job).count()
+                history_count = JobPostingHistory.objects.filter(job=job).count()
+
+                # Preserve candidate referrals and their entire evaluation workflow.
+                Referral.objects.filter(job_posting=job).update(job_posting=None)
+
+                # Audit history uses PROTECT, so it must be removed explicitly.
+                JobPostingHistory.objects.filter(job=job).delete()
+
+                # Deletes the job and CASCADE-related notifications and legacy applications.
+                job.delete()
+
+            return Response({
+                "message": "Job posting permanently deleted successfully.",
+                "deleted_job_id": deleted_job_id,
+                "deleted_job_title": deleted_job_title,
+                "preserved_referrals": referral_count,
+                "deleted_history_records": history_count
+            }, status=200)
+
+        except (ProtectedError, RestrictedError):
+            return Response({
+                "error": "Job posting cannot be deleted because protected related records exist."
             }, status=409)

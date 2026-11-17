@@ -1,15 +1,10 @@
 from django.urls import path
 from .views import (
-    DepartmentListView,
-    DepartmentCreateView,
-    DepartmentUpdateView,
-    SBUListCreateView,
-    SBUDetailView,
-    EmailTemplateListView,
-    EmailTemplateDetailView,
-    SBUListView,
-    CompletedReferralsListView,
-    CompletedReferralDetailView
+    DepartmentListView, DepartmentCreateView, DepartmentUpdateView,
+    SBUListCreateView, SBUDetailView, EmailTemplateListView,
+    EmailTemplateDetailView, SBUListView,
+    CompletedReferralsListView, CompletedReferralDetailView,
+    AdminJobPostingAuditListView, AdminJobPostingAuditDetailView
 )
 
 urlpatterns = [
@@ -23,4 +18,6 @@ urlpatterns = [
     path("sbus-list/", SBUListView.as_view()),
     path("completed-referrals/", CompletedReferralsListView.as_view(), name="completed-referrals-list"),
     path("completed-referrals/<int:referral_id>/", CompletedReferralDetailView.as_view(), name="completed-referral-detail"),
+    path("job-posting-audit/", AdminJobPostingAuditListView.as_view(), name="job-posting-audit-list"),
+    path("job-posting-audit/<uuid:job_id>/", AdminJobPostingAuditDetailView.as_view(), name="job-posting-audit-detail")
 ]
