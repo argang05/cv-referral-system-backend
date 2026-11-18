@@ -14,7 +14,13 @@ from api.utils import send_dynamic_email, get_role_and_departments
 # ==========================================================
 
 VALID_HR_STATUSES = {"IN_PROGRESS", "ACCEPTED", "REJECTED"}
-VALID_HR_STAGES = {"TEST", "T1", "T2", "T3", "HR", "OTHER"}
+
+# Only the first four recruitment stages are allowed for IN_PROGRESS.
+IN_PROGRESS_STAGES = {"TEST", "T1", "T2", "T3"}
+
+# Rejected candidates can be rejected at any of these six stages.
+REJECTION_STAGES = {"TEST", "T1", "T2", "T3", "HR", "OTHER"}
+
 VALID_ACTIONS = {"SAVE_DRAFT", "FINALIZE"}
 VALID_OFFER_OUTCOMES = {"OFFER_DECLINED", "DID_NOT_JOIN", "JOINED"}
 FINAL_STATUSES = {"FINAL_ACCEPTED", "FINAL_REJECTED"}
@@ -146,6 +152,55 @@ def parse_joining_date(value):
         return None, "joining_date must be a valid date in YYYY-MM-DD format."
 
 
+# ==========================================================
+# HR STAGE VALIDATION
+# ==========================================================
+
+def validate_hr_stage(hr_status, stage):
+    """
+    Validate the recruitment stage according to HR status.
+
+    IN_PROGRESS:
+        Mandatory stage.
+        Allowed: TEST, T1, T2, T3.
+
+    REJECTED:
+        Mandatory rejection stage.
+        Allowed: TEST, T1, T2, T3, HR, OTHER.
+
+    ACCEPTED:
+        Stage is not applicable and is cleared automatically.
+    """
+
+    if not isinstance(stage, str):
+        return None, "Invalid HR evaluation stage."
+
+    stage = stage.strip()
+
+    if hr_status == "IN_PROGRESS":
+        if not stage:
+            return None, "Please select the current recruitment stage for an In Progress evaluation."
+        if stage not in IN_PROGRESS_STAGES:
+            return None, "Invalid In Progress stage. Select Test, Technical Round 1, Technical Round 2 or Technical Round 3."
+        return stage, None
+
+    if hr_status == "REJECTED":
+        if not stage:
+            return None, "Please select the stage at which the candidate was rejected."
+        if stage not in REJECTION_STAGES:
+            return None, "Invalid rejection stage. Select Test, T1, T2, T3, HR Round or Other Reason."
+        return stage, None
+
+    if hr_status == "ACCEPTED":
+        return "", None
+
+    return None, "Invalid HR evaluation status."
+
+
+# ==========================================================
+# HR EVALUATION PAYLOAD VALIDATION
+# ==========================================================
+
 def validate_hr_evaluation_payload(data):
     referral_id = data.get("referral_id")
     emp_id = data.get("emp_id")
@@ -155,42 +210,66 @@ def validate_hr_evaluation_payload(data):
     action = data.get("action")
     expected_version = data.get("expected_version")
 
-    # New offer fields
     raw_offer_released = data.get("offer_released", False)
     offer_outcome = data.get("offer_outcome") or None
     raw_joining_date = data.get("joining_date")
 
+    # ------------------------------------------------------
+    # BASIC VALIDATION
+    # ------------------------------------------------------
+
     if not referral_id:
         return None, "referral_id is required."
+
     if not emp_id:
         return None, "emp_id is required."
+
     if action not in VALID_ACTIONS:
         return None, "Invalid action. Use SAVE_DRAFT or FINALIZE."
+
     if hr_status not in VALID_HR_STATUSES:
         return None, "Invalid HR evaluation status."
-    if not isinstance(stage, str):
-        return None, "Invalid HR evaluation stage."
+
     if not isinstance(comment, str) or not comment.strip():
         return None, "HR evaluation comment is required."
-    if stage and stage not in VALID_HR_STAGES:
-        return None, "Invalid HR evaluation stage."
-    if hr_status == "REJECTED" and stage not in VALID_HR_STAGES:
-        return None, "A valid rejection stage is required."
-    if action == "FINALIZE" and hr_status == "IN_PROGRESS":
-        return None, "An evaluation cannot be finalized while its status is IN_PROGRESS."
 
-    # Optimistic concurrency validation
+    # ------------------------------------------------------
+    # STATUS-SPECIFIC STAGE VALIDATION
+    # ------------------------------------------------------
+
+    validated_stage, stage_error = validate_hr_stage(hr_status, stage)
+
+    if stage_error:
+        return None, stage_error
+
+    # ------------------------------------------------------
+    # FINALIZATION VALIDATION
+    # ------------------------------------------------------
+
+    if action == "FINALIZE" and hr_status == "IN_PROGRESS":
+        return None, "An In Progress evaluation cannot be finalized. Select either Selected or Rejected before finalizing."
+
+    # ------------------------------------------------------
+    # OPTIMISTIC CONCURRENCY VALIDATION
+    # ------------------------------------------------------
+
     if expected_version is None or isinstance(expected_version, bool):
         return None, "expected_version is required."
+
     try:
         expected_version = int(expected_version)
     except (TypeError, ValueError):
         return None, "expected_version must be a non-negative integer."
+
     if expected_version < 0:
         return None, "expected_version must be a non-negative integer."
 
-    # Validate offer fields
+    # ------------------------------------------------------
+    # OFFER DETAILS VALIDATION
+    # ------------------------------------------------------
+
     offer_released, offer_error = parse_offer_released(raw_offer_released)
+
     if offer_error:
         return None, offer_error
 
@@ -198,40 +277,58 @@ def validate_hr_evaluation_payload(data):
         return None, "Invalid offer outcome. Use OFFER_DECLINED, DID_NOT_JOIN or JOINED."
 
     joining_date, date_error = parse_joining_date(raw_joining_date)
+
     if date_error:
         return None, date_error
 
-    # Rejected or in-progress candidates cannot have offer details
+    # Offer details are only applicable to selected candidates.
     if hr_status != "ACCEPTED":
         if offer_released or offer_outcome or joining_date:
             return None, "Offer details are only applicable when the HR decision is ACCEPTED."
+
         offer_released = False
         offer_outcome = None
         joining_date = None
 
-    # Offer outcome requires the offer to be released
+    # ------------------------------------------------------
+    # SELECTED CANDIDATE OFFER VALIDATION
+    # ------------------------------------------------------
+
     if hr_status == "ACCEPTED":
+
         if not offer_released and offer_outcome:
             return None, "An offer outcome cannot be selected before the offer is released."
+
         if not offer_released and joining_date:
             return None, "Joining date cannot be entered before the offer is released."
+
         if offer_outcome != "JOINED" and joining_date:
             return None, "Joining date is only applicable when the offer outcome is JOINED."
 
-    # Finalization rules
+    # ------------------------------------------------------
+    # FINAL OFFER OUTCOME VALIDATION
+    # ------------------------------------------------------
+
     if action == "FINALIZE" and hr_status == "ACCEPTED":
+
         if not offer_released:
             return None, "The offer must be released before finalizing an accepted candidate."
+
         if not offer_outcome:
             return None, "Select the final offer outcome before finalizing."
+
         if offer_outcome == "JOINED" and not joining_date:
             return None, "Joining date is required when the candidate has joined."
+
+    # ------------------------------------------------------
+    # VALIDATED PAYLOAD
+    # ------------------------------------------------------
 
     return {
         "referral_id": referral_id,
         "emp_id": emp_id,
         "status": hr_status,
-        "stage": stage,
+        "stage": validated_stage,
         "comment": comment.strip(),
         "action": action,
         "expected_version": expected_version,
@@ -241,15 +338,21 @@ def validate_hr_evaluation_payload(data):
     }, None
 
 
+# ==========================================================
+# APPLY HR DECISION TO REFERRAL
+# ==========================================================
+
 def apply_hr_decision(referral, status, comment, action):
     if action == "SAVE_DRAFT":
         referral.current_status = "CONSIDERED"
         referral.rejection_stage = None
         referral.rejection_reason = None
+
     elif status == "ACCEPTED":
         referral.current_status = "FINAL_ACCEPTED"
         referral.rejection_stage = None
         referral.rejection_reason = None
+
     elif status == "REJECTED":
         referral.current_status = "FINAL_REJECTED"
         referral.rejection_stage = "HR"
@@ -259,6 +362,10 @@ def apply_hr_decision(referral, status, comment, action):
         "current_status", "rejection_stage", "rejection_reason"
     ])
 
+
+# ==========================================================
+# HR EMAIL NOTIFICATION
+# ==========================================================
 
 def send_hr_evaluation_notification(candidate_name, status, comment):
     try:
@@ -272,6 +379,7 @@ def send_hr_evaluation_notification(candidate_name, status, comment):
                     "rejection_reason": comment
                 }
             )
+
         elif status == "ACCEPTED":
             send_dynamic_email(
                 purpose="CV_APPROVED_HR",
@@ -281,9 +389,14 @@ def send_hr_evaluation_notification(candidate_name, status, comment):
                     "portal_link": f"{settings.FRONTEND_BASE_URL}/"
                 }
             )
+
     except Exception as error:
         print("HR evaluation notification failed:", str(error))
 
+
+# ==========================================================
+# HR EVALUATION HISTORY
+# ==========================================================
 
 def create_hr_history(evaluation, user, action, revision):
     return HREvaluationHistory.objects.create(
@@ -357,8 +470,10 @@ class HREvaluationView(APIView):
             evaluations = referral.prefetched_hr_evaluations
             latest_review = reviews[0] if reviews else None
             latest_hr_evaluation = evaluations[0] if evaluations else None
+
             hr_started = latest_hr_evaluation is not None
             is_finalized = referral.current_status in FINAL_STATUSES
+
             is_hr_locked = (
                 latest_hr_evaluation.is_locked
                 if latest_hr_evaluation else False
@@ -368,12 +483,15 @@ class HREvaluationView(APIView):
                 latest_hr_evaluation.prefetched_history
                 if latest_hr_evaluation else []
             )
+
             hr_version = hr_history[0].revision if hr_history else 0
+
             considered_at = (
                 latest_review.reviewed_at
                 if latest_review and latest_review.decision == "CONSIDERED"
                 else None
             )
+
             final_at = (
                 latest_hr_evaluation.finalized_at
                 if latest_hr_evaluation and is_hr_locked
@@ -381,9 +499,11 @@ class HREvaluationView(APIView):
             )
 
             is_fresher = referral.candidate_type in FRESHER_TYPES
+
             is_academic_completed = (
                 is_fresher and referral.academic_details_status == "COMPLETED"
             )
+
             academic_details = serialize_academic_details(referral)
 
             response_data.append({
@@ -399,65 +519,93 @@ class HREvaluationView(APIView):
                 "rejection_reason": referral.rejection_reason,
                 "cv_url": referral.cv_url,
                 "additional_comment": referral.additional_comment,
+
                 "sbus": [
                     {"name": sbu.name, "email": sbu.email}
                     for sbu in referral.sbus.all()
                 ],
+
                 "referrer": {
                     "emp_id": referral.referrer.emp_id,
                     "name": referral.referrer.name,
                     "email": referral.referrer.email
                 } if referral.referrer else None,
 
-                # Academic details
+                # --------------------------------------------------
+                # ACADEMIC DETAILS
+                # --------------------------------------------------
+
                 "academic_details_status": referral.academic_details_status,
                 "is_academic_locked": is_academic_completed,
                 "academic_details": academic_details,
+
                 "tenth_percentage": (
                     referral.tenth_percentage if is_academic_completed else None
                 ),
+
                 "twelfth_percentage": (
                     referral.twelfth_percentage if is_academic_completed else None
                 ),
+
                 "graduation_cgpa": (
                     referral.graduation_cgpa if is_academic_completed else None
                 ),
+
                 "academic_details_updated_at": (
                     referral.academic_details_updated_at if is_academic_completed else None
                 ),
 
-                # SBU reviews
+                # --------------------------------------------------
+                # SBU REVIEWS
+                # --------------------------------------------------
+
                 "review": serialize_review(latest_review),
+
                 "review_history": [
                     serialize_review(review) for review in reviews
                 ],
 
-                # HR evaluation
+                # --------------------------------------------------
+                # HR EVALUATION
+                # --------------------------------------------------
+
                 "hr_evaluation": serialize_hr_evaluation(latest_hr_evaluation),
+
                 "hr_evaluation_status": (
                     latest_hr_evaluation.evaluation_status
                     if latest_hr_evaluation else "NOT_STARTED"
                 ),
+
                 "is_hr_locked": is_hr_locked,
+
                 "hr_evaluation_history": [
                     serialize_hr_history(history) for history in hr_history
                 ],
+
                 "hr_evaluation_version": hr_version,
+
                 "finalized_at": (
                     latest_hr_evaluation.finalized_at
                     if latest_hr_evaluation else None
                 ),
+
                 "finalized_by": (
                     serialize_hr_evaluation(latest_hr_evaluation)["finalized_by"]
                     if latest_hr_evaluation else None
                 ),
 
-                # Workflow flags
+                # --------------------------------------------------
+                # WORKFLOW FLAGS
+                # --------------------------------------------------
+
                 "hr_evaluation_started": hr_started,
                 "is_finalized": is_finalized,
                 "can_edit_sbu_review": not hr_started and not is_finalized,
 
-                # Progress timestamps
+                # --------------------------------------------------
+                # PROGRESS TIMESTAMPS
+                # --------------------------------------------------
+
                 "considered_at": considered_at,
                 "final_at": final_at
             })
@@ -470,12 +618,16 @@ class HREvaluationView(APIView):
 
     def post(self, request):
         validated_data, error = validate_hr_evaluation_payload(request.data)
+
         if error:
             return Response({"error": error}, status=400)
 
         user = get_hr_user(validated_data["emp_id"])
+
         if not user:
-            return Response({"error": "Only HR employees can submit HR evaluations."}, status=403)
+            return Response({
+                "error": "Only HR employees can submit HR evaluations."
+            }, status=403)
 
         with transaction.atomic():
             try:
@@ -538,11 +690,18 @@ class HREvaluationView(APIView):
                 joining_date=validated_data["joining_date"]
             )
 
-            create_hr_history(evaluation, user, action, revision=1)
+            create_hr_history(
+                evaluation=evaluation,
+                user=user,
+                action=action,
+                revision=1
+            )
+
             apply_hr_decision(referral, hr_status, comment, action)
 
             if is_finalizing:
                 candidate_name = referral.candidate_name
+
                 transaction.on_commit(
                     lambda name=candidate_name, status=hr_status, reason=comment:
                     send_hr_evaluation_notification(name, status, reason)
@@ -565,12 +724,16 @@ class HREvaluationView(APIView):
 
     def put(self, request):
         validated_data, error = validate_hr_evaluation_payload(request.data)
+
         if error:
             return Response({"error": error}, status=400)
 
         user = get_hr_user(validated_data["emp_id"])
+
         if not user:
-            return Response({"error": "Only HR employees can update HR evaluations."}, status=403)
+            return Response({
+                "error": "Only HR employees can update HR evaluations."
+            }, status=403)
 
         with transaction.atomic():
             try:
@@ -608,6 +771,7 @@ class HREvaluationView(APIView):
                 }, status=409)
 
             current_version = get_current_version(evaluation)
+
             if validated_data["expected_version"] != current_version:
                 return Response({
                     "error": "Another HR employee has updated this evaluation. Refresh the referral before saving.",
@@ -624,6 +788,7 @@ class HREvaluationView(APIView):
             evaluation.comment = comment
             evaluation.updated_by = user
             evaluation.evaluation_status = "COMPLETED" if is_finalizing else "DRAFT"
+
             evaluation.offer_released = validated_data["offer_released"]
             evaluation.offer_outcome = validated_data["offer_outcome"]
             evaluation.joining_date = validated_data["joining_date"]
@@ -639,11 +804,19 @@ class HREvaluationView(APIView):
             ])
 
             next_version = current_version + 1
-            create_hr_history(evaluation, user, action, revision=next_version)
+
+            create_hr_history(
+                evaluation=evaluation,
+                user=user,
+                action=action,
+                revision=next_version
+            )
+
             apply_hr_decision(referral, hr_status, comment, action)
 
             if is_finalizing:
                 candidate_name = referral.candidate_name
+
                 transaction.on_commit(
                     lambda name=candidate_name, status=hr_status, reason=comment:
                     send_hr_evaluation_notification(name, status, reason)

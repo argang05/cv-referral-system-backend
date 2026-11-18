@@ -221,21 +221,57 @@ class SubmitIJPReferralView(APIView):
 
 class MyReferralsView(APIView):
     permission_classes = [AllowAny]
+
     def get(self, request):
         emp_id = request.query_params.get('emp_id')
         if not emp_id:
             return Response({'error': 'Missing emp_id'}, status=400)
+
         try:
             user = User.objects.get(emp_id=emp_id)
         except User.DoesNotExist:
             return Response({'error': 'User not found'}, status=404)
-        referrals = Referral.objects.filter(referrer=user).select_related('referrer', 'academic_details_updated_by', 'job_posting', 'job_posting__department').prefetch_related('sbus').order_by('-submitted_at')
+
+        referrals = Referral.objects.filter(referrer=user).select_related(
+            'referrer', 'academic_details_updated_by', 'job_posting',
+            'job_posting__department'
+        ).prefetch_related('sbus').order_by('-submitted_at')
+
         data = []
+
         for r in referrals:
-            latest_review = Review.objects.filter(referral=r).select_related('reviewer').order_by('-id').first()
-            latest_eval = HREvaluation.objects.filter(referral=r, evaluation_status='COMPLETED').select_related('updated_by', 'finalized_by').order_by('-finalized_at', '-id').first()
+            reviews = list(
+                Review.objects.filter(referral=r)
+                .select_related('reviewer')
+                .order_by('-reviewed_at', '-id')
+            )
+
+            latest_review = reviews[0] if reviews else None
+
+            review_history = [
+                {
+                    'id': review.id,
+                    'decision': review.decision,
+                    'comment': review.comment,
+                    'reviewed_at': review.reviewed_at,
+                    'reviewed_by': {
+                        'emp_id': review.reviewer.emp_id,
+                        'name': review.reviewer.name,
+                        'email': review.reviewer.email
+                    } if review.reviewer else None
+                }
+                for review in reviews
+            ]
+
+            latest_eval = HREvaluation.objects.filter(
+                referral=r, evaluation_status='COMPLETED'
+            ).select_related('updated_by', 'finalized_by').order_by(
+                '-finalized_at', '-id'
+            ).first()
+
             is_fresher = r.candidate_type in ['INTERN_FRESHER', 'FULL_TIME_FRESHER']
             is_academic_locked = is_fresher and r.academic_details_status == 'COMPLETED'
+
             if latest_eval:
                 workflow_stage = 'COMPLETED'
             elif r.current_status == 'REJECTED':
@@ -246,6 +282,7 @@ class MyReferralsView(APIView):
                 workflow_stage = 'ACADEMIC_DETAILS'
             else:
                 workflow_stage = 'SBU_REVIEW'
+
             data.append({
                 'id': r.id,
                 'candidate_name': r.candidate_name,
@@ -257,29 +294,74 @@ class MyReferralsView(APIView):
                 'current_status': r.current_status,
                 'workflow_stage': workflow_stage,
                 'cv_url': r.cv_url,
-                'sbus': [{'name': s.name, 'email': s.email} for s in r.sbus.all()],
+                'sbus': [
+                    {'name': s.name, 'email': s.email}
+                    for s in r.sbus.all()
+                ],
                 'additional_comment': r.additional_comment,
                 'rejection_stage': r.rejection_stage,
                 'rejection_reason': r.rejection_reason,
                 'academic_details_status': r.academic_details_status,
                 'is_academic_locked': is_academic_locked,
-                'academic_details': {'tenth_percentage': r.tenth_percentage, 'twelfth_percentage': r.twelfth_percentage, 'graduation_cgpa': r.graduation_cgpa} if is_academic_locked else None,
+                'academic_details': {
+                    'tenth_percentage': r.tenth_percentage,
+                    'twelfth_percentage': r.twelfth_percentage,
+                    'graduation_cgpa': r.graduation_cgpa
+                } if is_academic_locked else None,
                 'tenth_percentage': r.tenth_percentage if is_academic_locked else None,
                 'twelfth_percentage': r.twelfth_percentage if is_academic_locked else None,
                 'graduation_cgpa': r.graduation_cgpa if is_academic_locked else None,
                 'academic_details_updated_at': r.academic_details_updated_at if is_academic_locked else None,
-                'academic_details_updated_by': {'emp_id': r.academic_details_updated_by.emp_id, 'name': r.academic_details_updated_by.name} if is_academic_locked and r.academic_details_updated_by else None,
-                'referrer': {'emp_id': r.referrer.emp_id, 'name': r.referrer.name, 'email': r.referrer.email},
+                'academic_details_updated_by': {
+                    'emp_id': r.academic_details_updated_by.emp_id,
+                    'name': r.academic_details_updated_by.name
+                } if is_academic_locked and r.academic_details_updated_by else None,
+                'referrer': {
+                    'emp_id': r.referrer.emp_id,
+                    'name': r.referrer.name,
+                    'email': r.referrer.email
+                },
                 'considered_at': latest_review.reviewed_at if latest_review else None,
                 'final_at': latest_eval.finalized_at if latest_eval else None,
-                'review': {'decision': latest_review.decision, 'comment': latest_review.comment, 'reviewed_at': latest_review.reviewed_at, 'reviewed_by': latest_review.reviewer.name if latest_review.reviewer else 'Unknown Reviewer'} if latest_review else None,
-                'hr_evaluation': {'stage': latest_eval.stage, 'status': latest_eval.status, 'comment': latest_eval.comment, 'updated_at': latest_eval.updated_at, 'updated_by': latest_eval.updated_by.name if latest_eval.updated_by else 'Unknown HR Employee', 'evaluation_status': latest_eval.evaluation_status, 'finalized_at': latest_eval.finalized_at, 'finalized_by': {'emp_id': latest_eval.finalized_by.emp_id, 'name': latest_eval.finalized_by.name, 'email': latest_eval.finalized_by.email} if latest_eval.finalized_by else None, 'offer_released': latest_eval.offer_released, 'offer_outcome': latest_eval.offer_outcome, 'joining_date': latest_eval.joining_date, 'is_locked': latest_eval.is_locked} if latest_eval else None,
+                'review': {
+                    'decision': latest_review.decision,
+                    'comment': latest_review.comment,
+                    'reviewed_at': latest_review.reviewed_at,
+                    'reviewed_by': latest_review.reviewer.name if latest_review.reviewer else 'Unknown Reviewer'
+                } if latest_review else None,
+                'review_history': review_history,
+                'hr_evaluation': {
+                    'stage': latest_eval.stage,
+                    'status': latest_eval.status,
+                    'comment': latest_eval.comment,
+                    'updated_at': latest_eval.updated_at,
+                    'updated_by': latest_eval.updated_by.name if latest_eval.updated_by else 'Unknown HR Employee',
+                    'evaluation_status': latest_eval.evaluation_status,
+                    'finalized_at': latest_eval.finalized_at,
+                    'finalized_by': {
+                        'emp_id': latest_eval.finalized_by.emp_id,
+                        'name': latest_eval.finalized_by.name,
+                        'email': latest_eval.finalized_by.email
+                    } if latest_eval.finalized_by else None,
+                    'offer_released': latest_eval.offer_released,
+                    'offer_outcome': latest_eval.offer_outcome,
+                    'joining_date': latest_eval.joining_date,
+                    'is_locked': latest_eval.is_locked
+                } if latest_eval else None,
                 'offer_released': latest_eval.offer_released if latest_eval else False,
                 'offer_outcome': latest_eval.offer_outcome if latest_eval else None,
                 'joining_date': latest_eval.joining_date if latest_eval else None,
                 'is_hr_finalized': bool(latest_eval),
-                'job_posting': {'job_id': str(r.job_posting.job_id), 'job_title': r.job_posting.job_title, 'department': r.job_posting.department.name if r.job_posting.department else None, 'location': r.job_posting.location, 'employment_type': r.job_posting.employment_type, 'status': r.job_posting.status} if r.job_posting else None
+                'job_posting': {
+                    'job_id': str(r.job_posting.job_id),
+                    'job_title': r.job_posting.job_title,
+                    'department': r.job_posting.department.name if r.job_posting.department else None,
+                    'location': r.job_posting.location,
+                    'employment_type': r.job_posting.employment_type,
+                    'status': r.job_posting.status
+                } if r.job_posting else None
             })
+
         return Response(data, status=200)
 
 class UpdateReferralView(APIView):
