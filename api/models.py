@@ -294,7 +294,7 @@ class Notification(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     notification_type = models.CharField(max_length=30, choices=NOTIFICATION_TYPE_CHOICES, default='NEW_JOB')
     audience = models.CharField(max_length=10, choices=AUDIENCE_CHOICES, default='ALL', db_index=True)
-    job_posting = models.ForeignKey('JobVacancy', on_delete=models.SET_NULL, null=True, blank=True, related_name='notifications')
+    job_posting = models.ForeignKey('JobVacancy', on_delete=models.CASCADE, null=True, blank=True, related_name='notifications')
     title = models.CharField(max_length=255)
     message = models.TextField()
     target_url = models.CharField(max_length=500, blank=True, default='')
