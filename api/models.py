@@ -280,12 +280,24 @@ class JobPostingHistory(models.Model):
 
 # 12. Shared In-App Notifications
 class Notification(models.Model):
-    NOTIFICATION_TYPE_CHOICES = [('NEW_JOB', 'New Job Posting')]
+    NOTIFICATION_TYPE_CHOICES = [
+        ('NEW_JOB', 'New Job Posting'),
+        ('IJR_NOMINATED', 'Internal Job Rotation Nomination'),
+        ('IJR_APPROVED', 'Internal Job Rotation Approved'),
+        ('IJR_REJECTED', 'Internal Job Rotation Rejected'),
+        ('IJR_IMPLEMENTED', 'Internal Job Rotation Implemented'),
+        ('REFERRAL_UPDATED', 'Referral Status Updated'),
+        ('REVIEW_ASSIGNED', 'Referral Review Assigned'),
+        ('HR_EVALUATION_UPDATED', 'HR Evaluation Updated')
+    ]
+    AUDIENCE_CHOICES = [('ALL', 'All Active Employees'), ('SPECIFIC', 'Specific Employees')]
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
     notification_type = models.CharField(max_length=30, choices=NOTIFICATION_TYPE_CHOICES, default='NEW_JOB')
-    job_posting = models.ForeignKey('JobVacancy', on_delete=models.CASCADE, related_name='notifications')
+    audience = models.CharField(max_length=10, choices=AUDIENCE_CHOICES, default='ALL', db_index=True)
+    job_posting = models.ForeignKey('JobVacancy', on_delete=models.SET_NULL, null=True, blank=True, related_name='notifications')
     title = models.CharField(max_length=255)
     message = models.TextField()
+    target_url = models.CharField(max_length=500, blank=True, default='')
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
@@ -318,3 +330,14 @@ class JobApplication(models.Model):
 
     def __str__(self):
         return f"{self.name} applied for {self.job.job_title}"
+
+# 15. Notification Recipient Tracking
+class NotificationRecipient(models.Model):
+    notification = models.ForeignKey('Notification', on_delete=models.CASCADE, related_name='recipients')
+    employee = models.ForeignKey('User', to_field='emp_id', on_delete=models.CASCADE, related_name='received_notifications')
+
+    class Meta:
+        constraints = [models.UniqueConstraint(fields=['notification', 'employee'], name='unique_notification_employee_recipient')]
+
+    def __str__(self):
+        return f"{self.employee.name} - {self.notification.title}"
