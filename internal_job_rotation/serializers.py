@@ -82,7 +82,14 @@ class IJRNominationSerializer(serializers.ModelSerializer):
     employee_name = serializers.CharField(source='employee.name', read_only=True)
     nominated_by_emp_id = serializers.CharField(source='nominated_by.emp_id', read_only=True)
     nominated_by_name = serializers.CharField(source='nominated_by.name', read_only=True)
+    decided_by_name = serializers.CharField(source='decided_by.name', read_only=True, allow_null=True)
 
     class Meta:
         model = JobRotationNomination
-        fields = ('id', 'employee_emp_id', 'employee_name', 'nominated_by_emp_id', 'nominated_by_name', 'current_details', 'proposed_details', 'reason', 'remarks', 'effective_date', 'status', 'created_at', 'updated_at')
+        fields = (
+            'id', 'employee_emp_id', 'employee_name', 'nominated_by_emp_id',
+            'nominated_by_name', 'current_details', 'proposed_details',
+            'reason', 'remarks', 'effective_date', 'status',
+            'decision_remarks', 'decided_by_name', 'decided_at',
+            'created_at', 'updated_at'
+        )
