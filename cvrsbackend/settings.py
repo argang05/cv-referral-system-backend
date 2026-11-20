@@ -121,7 +121,8 @@ INSTALLED_APPS = [
     "review",
     "hr_evaluation",
     "job_vacancy",
-    "notifications"
+    "notifications",
+    "internal_job_rotation",
 ]
 
 

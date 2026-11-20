@@ -156,7 +156,7 @@ class HREvaluationHistory(models.Model):
     status = models.CharField(max_length=20, choices=HREvaluation.STATUS_CHOICES)
     comment = models.TextField()
     action = models.CharField(max_length=20, choices=ACTION_CHOICES)
-    updated_by = models.ForeignKey(User, on_delete=models.SET_NULL, null=True, blank=True, related_name='hr_evaluation_revisions')
+    updated_by = models.ForeignKey(User, to_field='emp_id', on_delete=models.SET_NULL, null=True, blank=True, related_name='hr_evaluation_revisions')
     created_at = models.DateTimeField(auto_now_add=True)
     offer_released = models.BooleanField(default=False)
     offer_outcome = models.CharField(max_length=20, choices=HREvaluation.OFFER_OUTCOME_CHOICES, null=True, blank=True)
@@ -295,6 +295,7 @@ class Notification(models.Model):
     notification_type = models.CharField(max_length=30, choices=NOTIFICATION_TYPE_CHOICES, default='NEW_JOB')
     audience = models.CharField(max_length=10, choices=AUDIENCE_CHOICES, default='ALL', db_index=True)
     job_posting = models.ForeignKey('JobVacancy', on_delete=models.CASCADE, null=True, blank=True, related_name='notifications')
+    job_rotation_nomination = models.ForeignKey('JobRotationNomination', on_delete=models.CASCADE, null=True, blank=True, related_name='notifications')
     title = models.CharField(max_length=255)
     message = models.TextField()
     target_url = models.CharField(max_length=500, blank=True, default='')
@@ -341,3 +342,136 @@ class NotificationRecipient(models.Model):
 
     def __str__(self):
         return f"{self.employee.name} - {self.notification.title}"
+
+
+# 16. Internal Job Rotation Nomination
+class JobRotationNomination(models.Model):
+    STATUS_CHOICES = [
+        ('PENDING', 'Pending'),
+        ('APPROVED', 'Approved for Implementation'),
+        ('REJECTED', 'Rejected for Implementation'),
+        ('IMPLEMENTED', 'Implemented'),
+        ('CANCELLED', 'Cancelled')
+    ]
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    employee = models.ForeignKey(
+        'User',
+        on_delete=models.PROTECT,
+        related_name='rotation_nominations'
+    )
+
+    nominated_by = models.ForeignKey(
+        'User',
+        on_delete=models.PROTECT,
+        related_name='submitted_rotation_nominations'
+    )
+
+    current_details = models.JSONField(default=dict)
+    proposed_details = models.JSONField(default=dict)
+
+    reason = models.TextField()
+    remarks = models.TextField(blank=True, default='')
+
+    effective_date = models.DateField(null=True, blank=True)
+
+    status = models.CharField(
+        max_length=20,
+        choices=STATUS_CHOICES,
+        default='PENDING',
+        db_index=True
+    )
+
+    # Administrator decision tracking
+    decided_by = models.ForeignKey(
+        'User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='ijr_decisions'
+    )
+
+    decided_at = models.DateTimeField(null=True, blank=True)
+
+    decision_remarks = models.TextField(blank=True, default='')
+
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        ordering = ['-created_at']
+
+        constraints = [
+            models.UniqueConstraint(
+                fields=['employee'],
+                condition=models.Q(status__in=['PENDING', 'APPROVED']),
+                name='unique_active_ijr_nomination_per_employee'
+            )
+        ]
+
+        indexes = [
+            models.Index(fields=['status', 'created_at']),
+            models.Index(fields=['employee', 'created_at'])
+        ]
+
+    def __str__(self):
+        return f'IJR {self.employee.emp_id} - {self.status}'
+
+
+# 17. Internal Job Rotation Administrative History
+class JobRotationHistory(models.Model):
+    ACTION_CHOICES = [
+        ('APPROVED', 'Approved for Implementation'),
+        ('REJECTED', 'Rejected for Implementation')
+    ]
+
+    nomination = models.ForeignKey(
+        'JobRotationNomination',
+        on_delete=models.CASCADE,
+        related_name='history'
+    )
+
+    action = models.CharField(
+        max_length=20,
+        choices=ACTION_CHOICES
+    )
+
+    performed_by = models.ForeignKey(
+        'User',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name='ijr_administrative_actions'
+    )
+
+    previous_status = models.CharField(
+        max_length=20,
+        choices=JobRotationNomination.STATUS_CHOICES
+    )
+
+    new_status = models.CharField(
+        max_length=20,
+        choices=JobRotationNomination.STATUS_CHOICES
+    )
+
+    remarks = models.TextField(blank=True, default='')
+
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        ordering = ['-created_at', '-id']
+
+        indexes = [
+            models.Index(
+                fields=['nomination', '-created_at'],
+                name='ijr_history_nom_date_idx'
+            ),
+            models.Index(
+                fields=['action', '-created_at'],
+                name='ijr_history_action_idx'
+            )
+        ]
+
+    def __str__(self):
+        return f'IJR {self.nomination_id} - {self.action}'

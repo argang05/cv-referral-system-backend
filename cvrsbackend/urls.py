@@ -10,4 +10,5 @@ urlpatterns = [
     path('api/admin-config/', include('admin_config.urls')),
     path('api/job-vacancy/', include('job_vacancy.urls')),
     path('api/notifications/', include('notifications.urls')),
+    path('api/internal-job-rotation/', include('internal_job_rotation.urls')),
 ]
