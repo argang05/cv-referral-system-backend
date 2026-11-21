@@ -279,26 +279,91 @@ class JobPostingHistory(models.Model):
         return f"{self.job.job_title} - {self.action}"
 
 # 12. Shared In-App Notifications
+# 12. Shared In-App Notifications
 class Notification(models.Model):
     NOTIFICATION_TYPE_CHOICES = [
         ('NEW_JOB', 'New Job Posting'),
+
+        # Internal Job Rotation
         ('IJR_NOMINATED', 'Internal Job Rotation Nomination'),
         ('IJR_APPROVED', 'Internal Job Rotation Approved'),
         ('IJR_REJECTED', 'Internal Job Rotation Rejected'),
         ('IJR_IMPLEMENTED', 'Internal Job Rotation Implemented'),
+
+        # CV Referral
         ('REFERRAL_UPDATED', 'Referral Status Updated'),
         ('REVIEW_ASSIGNED', 'Referral Review Assigned'),
-        ('HR_EVALUATION_UPDATED', 'HR Evaluation Updated')
+        ('HR_EVALUATION_UPDATED', 'HR Evaluation Updated'),
+
+        # Additional CV Referral events
+        ('ACADEMIC_REQUIRED', 'Academic Details Required'),
+        ('ACADEMIC_COMPLETED', 'Academic Details Completed'),
+        ('SBU_DECISION', 'SBU Review Decision'),
+        ('SBU_REVISION', 'SBU Review Revised'),
+        ('HR_EVALUATION_STARTED', 'HR Evaluation Started'),
+        ('HR_FINALIZED', 'HR Evaluation Finalized'),
+        ('OFFER_UPDATED', 'Candidate Offer Updated'),
     ]
-    AUDIENCE_CHOICES = [('ALL', 'All Active Employees'), ('SPECIFIC', 'Specific Employees')]
-    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
-    notification_type = models.CharField(max_length=30, choices=NOTIFICATION_TYPE_CHOICES, default='NEW_JOB')
-    audience = models.CharField(max_length=10, choices=AUDIENCE_CHOICES, default='ALL', db_index=True)
-    job_posting = models.ForeignKey('JobVacancy', on_delete=models.CASCADE, null=True, blank=True, related_name='notifications')
-    job_rotation_nomination = models.ForeignKey('JobRotationNomination', on_delete=models.CASCADE, null=True, blank=True, related_name='notifications')
+
+    AUDIENCE_CHOICES = [
+        ('ALL', 'All Active Employees'),
+        ('SPECIFIC', 'Specific Employees')
+    ]
+
+    id = models.UUIDField(
+        primary_key=True,
+        default=uuid.uuid4,
+        editable=False
+    )
+
+    notification_type = models.CharField(
+        max_length=30,
+        choices=NOTIFICATION_TYPE_CHOICES,
+        default='NEW_JOB'
+    )
+
+    audience = models.CharField(
+        max_length=10,
+        choices=AUDIENCE_CHOICES,
+        default='ALL',
+        db_index=True
+    )
+
+    job_posting = models.ForeignKey(
+        'JobVacancy',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='notifications'
+    )
+
+    job_rotation_nomination = models.ForeignKey(
+        'JobRotationNomination',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='notifications'
+    )
+
+    # CV Referral association
+    referral = models.ForeignKey(
+        'Referral',
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name='notifications'
+    )
+
     title = models.CharField(max_length=255)
+
     message = models.TextField()
-    target_url = models.CharField(max_length=500, blank=True, default='')
+
+    target_url = models.CharField(
+        max_length=500,
+        blank=True,
+        default=''
+    )
+
     created_at = models.DateTimeField(auto_now_add=True)
 
     class Meta:
