@@ -463,31 +463,25 @@ def notify_sbu_review_assigned(referral):
 # ==========================================================
 
 def notify_academic_details_finalized(referral, hr_user=None):
-    """
-    Only finalized academic records generate notifications.
-
-    Draft saves never trigger this function from the
-    existing academic workflow.
-    """
-
-    if not referral.is_fresher:
+    if not referral.is_fresher or referral.academic_details_status != "COMPLETED":
         return None
 
-    if referral.academic_details_status != "COMPLETED":
-        return None
+    referrer = get_referrer(referral)
+    referrer_notification = None
 
-    return notify_referrer_and_reviewers(
-        referral=referral,
-        notification_type="ACADEMIC_COMPLETED",
-        title="Candidate Ready for SBU Review",
-        message=(
-            f"Academic details for {referral.candidate_name} "
-            f"have been finalized. "
-            f"The candidate is now ready for SBU review."
-        ),
-        actor=hr_user
-    )
+    if referrer:
+        referrer_notification = create_referral_notification(
+            referral=referral,
+            notification_type="ACADEMIC_COMPLETED",
+            title="Candidate Ready for SBU Review",
+            message=f"Academic details for {referral.candidate_name} have been finalized. The candidate has been forwarded for SBU review.",
+            users=[referrer],
+            target_url=REFERRER_URL,
+            actor=hr_user
+        )
 
+    reviewer_notification = notify_sbu_review_assigned(referral)
+    return [notification for notification in [referrer_notification, reviewer_notification] if notification]
 
 # ==========================================================
 # SBU REVIEW DECISION

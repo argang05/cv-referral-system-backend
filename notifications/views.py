@@ -1,3 +1,4 @@
+from django.db import transaction
 from django.db.models import Q
 from django.shortcuts import get_object_or_404
 from rest_framework.views import APIView
@@ -64,3 +65,32 @@ class NotificationMarkReadView(NotificationBaseView):
         notification = get_object_or_404(self.get_queryset(request.user), id=notification_id)
         NotificationRead.objects.get_or_create(notification=notification, employee=request.user)
         return Response({'message': 'Notification marked as read.'})
+
+class NotificationMarkAllReadView(NotificationBaseView):
+    def post(self, request):
+        read_ids = NotificationRead.objects.filter(
+            employee=request.user
+        ).values('notification_id')
+
+        notification_ids = list(
+            self.get_queryset(request.user)
+            .exclude(id__in=read_ids)
+            .values_list('id', flat=True)
+        )
+
+        if not notification_ids:
+            return Response({
+                'message': 'All notifications are already read.',
+                'marked_count': 0
+            })
+
+        with transaction.atomic():
+            NotificationRead.objects.bulk_create([
+                NotificationRead(notification_id=notification_id, employee=request.user)
+                for notification_id in notification_ids
+            ], ignore_conflicts=True)
+
+        return Response({
+            'message': 'All notifications marked as read.',
+            'marked_count': len(notification_ids)
+        })
